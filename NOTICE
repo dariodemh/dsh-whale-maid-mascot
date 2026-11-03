@@ -1,0 +1,45 @@
+# NOTICE — provenance and attribution
+
+This repository is a **derivative work**. It is **not** the original plugin.
+
+## Original project
+
+- **Name**: `dsh-whale-maid-mascot`
+- **Repository**: <https://github.com/yefeng7531/dsh-whale-maid-mascot>
+- **Author**: [yefeng7531](https://github.com/yefeng7531) — Copyright (c) 2026
+- **Contributor**: [Amakurai](https://github.com/Amakurai) — explanation-cleanup fix
+- **License (code)**: MIT — see [LICENSE](LICENSE); the upstream copyright notice is preserved
+- **Base**: upstream `master` / version `1.0.0`, used as the starting point for this repository
+
+The upstream repository is the original work and remains the canonical source.
+If you want the unmodified plugin, install or clone the upstream repository
+instead of this one. Upstream issues and pull requests should go to
+<https://github.com/yefeng7531/dsh-whale-maid-mascot/issues>.
+
+## This repository
+
+[`dariodemh/dsh-whale-maid-mascot`](https://github.com/dariodemh/dsh-whale-maid-mascot)
+is a standalone derivative maintained by [dariodemh](https://github.com/dariodemh).
+It keeps the upstream MIT copyright notice and adds substantial changes:
+
+- AI chat panel and ambient AI lines through the DSH `llm` service.
+- Workspace panel ("Mis trabajos") with safe previews and deliverable reactions.
+- Mood poses (school / hoodie / xiaohei × front / side / back) and a four-outfit cycle.
+- Enriched localisation, explain panel, prompt presets and notifications.
+- Host route unit tests (14) and a Playwright browser suite (19).
+- Bilingual documentation, asset licensing notice and CI.
+
+The full change list is in [CHANGELOG.md](CHANGELOG.md).
+
+## Artwork
+
+The character artwork in `assets/` is **not** part of the MIT code license. It is
+**CC BY-NC-SA 4.0** by **上善无形** (non-commercial, attribution, share-alike).
+Sources, modifications and conditions: [ASSETS-LICENSE.md](ASSETS-LICENSE.md) and
+[assets/SOURCE.md](assets/SOURCE.md).
+
+## Third-party components
+
+- **DeepSeek Harness (DSH)** by DeepSeek. This is an unofficial fan project, not an
+  official DeepSeek product, and it does not represent DeepSeek's views or
+  endorsement.

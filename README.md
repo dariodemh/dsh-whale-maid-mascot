@@ -1,8 +1,18 @@
 # Whale-chan · DeepSeek 娘 mascot for DeepSeek Harness 🐋
 
+> **Provenance — this is not the original plugin.**
+> This repository is a standalone, heavily extended derivative of
+> **[yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)**
+> by **[yefeng7531](https://github.com/yefeng7531)** (MIT, with a contribution by
+> [Amakurai](https://github.com/Amakurai)). It is not a GitHub "fork" of that
+> repository, but it starts from its source and keeps its MIT copyright notice.
+> See [NOTICE](NOTICE) for the full provenance and [CHANGELOG.md](CHANGELOG.md) for
+> everything that changed. Upstream remains the original work: install that
+> repository if you want the unmodified plugin.
+
 **An in-page companion for the [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) web UI** — not a separate desktop window. She lives in the bottom-right corner of the page: you can drag her around, pat her head, talk to her, and she reacts to what you build.
 
-This is an extended, unofficial fan project based on **[yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)** (MIT), rewritten and extended with AI chat, a workspace panel, mood poses, notifications and a much larger test suite. See [credits](#credits-and-attribution).
+The upstream plugin provides the base in-page pet (dragging, tap zones, affection, speech bubbles, outfit switching). This repository rebuilds and extends it with AI chat, a workspace panel, mood poses, notifications and a much larger test suite. See [provenance and credits](#provenance-attribution-and-credits).
 
 ![Whale-chan chatting and standing next to her speech bubble](docs/screenshots/chat.png)
 
@@ -173,15 +183,24 @@ The browser tests start a local QA server, load the real client in Chromium and 
 
 CI runs the host route tests on every push and pull request (`.github/workflows/ci.yml`).
 
+To compare with the original project, add it as a second remote:
+
+```bash
+git remote add upstream https://github.com/yefeng7531/dsh-whale-maid-mascot.git
+git fetch upstream
+```
+
 ## Customisation
 
 - **Bubble lines / size / position**: edit the `LINES` arrays at the top of `dsh/client.js` and the `.wm-root` / `.wm-img` CSS.
 - **New mood poses**: drop `happy.png`, `shy.png`, … into `assets/poses/` (transparent PNG or WebP, roughly 520 px tall). The host publishes them automatically at `/whale-maid-mascot/poses/<mood>.png` and in the manifest; no code change needed.
 - **Personality / prompt**: the persona and rules live in `dsh/index.js` (`PERSONA`, `CHAT_RULES`, `EVENT_PROMPTS`).
 
-## Credits and attribution
+## Provenance, attribution and credits
 
-- **Upstream plugin**: [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) — MIT, original mascot plugin this repository is based on.
+- **Original plugin (base of this repository)**: [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) by **yefeng7531** — MIT, with a contribution by [Amakurai](https://github.com/Amakurai). This repository starts from that source (upstream `master` / v1.0.0) and is **not** the original project; full details in [NOTICE](NOTICE).
+- **What changed here**: AI chat and ambient lines, workspace panel with safe previews, mood poses (school / hoodie / xiaohei), four-outfit cycle, explain panel, prompt presets, notifications, tests and bilingual documentation — full list in [CHANGELOG.md](CHANGELOG.md).
+- **Want the original?** Install or clone `yefeng7531/dsh-whale-maid-mascot`; upstream issues and pull requests belong there.
 - **Character artwork**: 鲸鱼娘 / Whale-chan by **上善无形** ([Bilibili](https://space.bilibili.com/4456176)) — **CC BY-NC-SA 4.0**, non-commercial use only. Sources and modifications: [assets/SOURCE.md](assets/SOURCE.md) and [ASSETS-LICENSE.md](ASSETS-LICENSE.md).
 - **DeepSeek Harness**: DeepSeek. This is a personal fan project, not an official DeepSeek product.
 
@@ -194,9 +213,18 @@ CI runs the host route tests on every push and pull request (`.github/workflows/
 
 # Español
 
+> **Procedencia: este no es el plugin original.**
+> Este repositorio es un derivado independiente y ampliado de
+> **[yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)**
+> de **[yefeng7531](https://github.com/yefeng7531)** (MIT, con una contribución de
+> [Amakurai](https://github.com/Amakurai)). No es un "fork" de GitHub, pero parte de
+> su código y conserva su aviso de copyright MIT. Procedencia completa en
+> [NOTICE](NOTICE) y cambios en [CHANGELOG.md](CHANGELOG.md). Si quieres el plugin
+> original sin modificar, instala el repositorio upstream.
+
 **Un complemento de página para la interfaz web de DeepSeek Harness (DSH)** — no es una ventana de escritorio aparte. Whale-chan vive en la esquina inferior derecha: se puede arrastrar, acariciar y con la que puedes hablar, y reacciona a lo que vas creando.
 
-Proyecto fan **no oficial**, ampliación de [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) (MIT). Todo el texto de la interfaz está en español.
+Proyecto fan **no oficial** y derivado del plugin original de **yefeng7531** (MIT). Todo el texto de la interfaz está en español.
 
 ![Whale-chan charlando con su bola de diálogo](docs/screenshots/chat.png)
 
@@ -242,7 +270,7 @@ Sin telemetría ni peticiones de red propias: lo único que sale del equipo son 
 
 ## Agradecimientos y licencia
 
-- Complemento original: [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) (MIT).
+- **Plugin original (base de este repositorio)**: [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) de **yefeng7531** (MIT), con una contribución de [Amakurai](https://github.com/Amakurai). Procedencia completa en [NOTICE](NOTICE); cambios en [CHANGELOG.md](CHANGELOG.md). Si quieres el plugin original sin modificar, instala el repositorio upstream.
 - Personaje: 鲸鱼娘 / Whale-chan de **上善无形** ([Bilibili](https://space.bilibili.com/4456176)) — **CC BY-NC-SA 4.0**, solo uso no comercial. Fuentes y cambios en [assets/SOURCE.md](assets/SOURCE.md) y [ASSETS-LICENSE.md](ASSETS-LICENSE.md).
 - Código: MIT ([LICENSE](LICENSE)). **Arte: CC BY-NC-SA 4.0, no MIT y no comercial.**
 - Proyecto fan no oficial; DeepSeek Harness es de DeepSeek.

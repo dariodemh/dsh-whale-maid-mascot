@@ -1,5 +1,11 @@
 # Changelog
 
+> **Provenance:** this repository is a derivative of
+> [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)
+> by yefeng7531 (MIT, contributor: Amakurai). See [NOTICE](NOTICE). This changelog
+> describes the changes made **in this repository** on top of the upstream 1.0.0
+> base; it is not the upstream changelog.
+
 ## 1.1.0 — 2026-11-03
 
 First public release of this extended version. It is based on

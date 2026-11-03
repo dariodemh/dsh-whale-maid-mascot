@@ -2,6 +2,20 @@
   "name": "dsh-whale-maid-mascot",
   "version": "1.1.0",
   "description": "Whale-chan (DeepSeek 娘) in-page mascot for the DeepSeek Harness web UI: four outfits, mood poses, affection, AI chat and a workspace panel.",
+  "author": {
+    "name": "dariodemh",
+    "url": "https://github.com/dariodemh"
+  },
+  "contributors": [
+    {
+      "name": "yefeng7531",
+      "url": "https://github.com/yefeng7531"
+    },
+    {
+      "name": "Amakurai",
+      "url": "https://github.com/Amakurai"
+    }
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dariodemh/dsh-whale-maid-mascot.git"
@@ -40,6 +54,7 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "ASSETS-LICENSE.md",
     "CHANGELOG.md"
   ],
