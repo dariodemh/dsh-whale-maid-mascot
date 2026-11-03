@@ -1,0 +1,710 @@
+// DeepSeek Harness (dsh) host half of the whale-maid mascot plugin.
+//
+// The browser half (dsh/client.js) fetches the character PNGs from here and
+// talks to the two AI routes below:
+//   POST /whale-maid-mascot/line  -> one short ambient line for an event
+//   POST /whale-maid-mascot/chat  -> a conversational reply + mood
+// Both use the harness' own LLM service (the user's configured provider and
+// credentials), so no key ever reaches the browser. Anything optional fails
+// soft: if the model is unavailable the client keeps using its fixed lines.
+//
+// It also serves the optional expression poses in assets/poses/<mood>.png and
+// a small manifest (GET /whale-maid-mascot/poses.json) so the browser can swap
+// the sprite by mood whenever the artwork exists.
+//
+// Workspace awareness:
+//   GET /whale-maid-mascot/workspace?root=<session cwd>  -> projects + recent files
+//   GET /whale-maid-mascot/workspace/file?root=&path=    -> safe preview (image/text/pdf)
+// The mascot uses that summary to talk about the user's work and to render the
+// "Mis trabajos" panel. Roots must live under the user's home folder.
+import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join, resolve, relative, sep, extname } from 'node:path'
+import { homedir } from 'node:os'
+
+export const name = 'whale-maid-mascot'
+export const inject = []
+
+const ASSETS = [
+  { route: '/whale-maid-mascot/a.png', file: new URL('../assets/mascot_a.png', import.meta.url) },
+  { route: '/whale-maid-mascot/b.png', file: new URL('../assets/mascot_b.png', import.meta.url) },
+  { route: '/whale-maid-mascot/c.png', file: new URL('../assets/mascot_c.png', import.meta.url) },
+]
+
+const POSES_DIR = fileURLToPath(new URL('../assets/poses/', import.meta.url))
+const POSES_ROUTE = '/whale-maid-mascot/poses/'
+const POSE_EXT = /\.(png|webp)$/i
+
+// --- workspace awareness ------------------------------------------------------
+// The browser sends the current session cwd; the host scans that folder so the
+// mascot can talk about the user's projects and deliverables, and serve safe
+// previews of individual files. Roots are limited to the user's home folder and
+// every resolved path must stay inside the requested workspace.
+const WORKSPACE_ROUTE = '/whale-maid-mascot/workspace'
+const WORKSPACE_FILE_ROUTE = '/whale-maid-mascot/workspace/file'
+const IGNORED_DIRS = new Set([
+  'node_modules', '.git', '.pnpm-store', '.cache', '.next', '.nuxt', '.venv', 'venv',
+  '__pycache__', 'dist', 'build', 'out', 'tmp', 'temp', '.idea', '.vscode', '.dsh',
+])
+const MAX_SCAN_FILES = 4000
+const MAX_SCAN_DEPTH = 3
+const PREVIEW_TEXT_LIMIT = 200 * 1024
+const PREVIEW_IMAGE_LIMIT = 8 * 1024 * 1024
+const PREVIEW_PDF_LIMIT = 25 * 1024 * 1024
+const WORKSPACE_CACHE_TTL = 8000
+
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'avif'])
+const TEXT_EXT = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonc', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
+  'py', 'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'php', 'sh', 'ps1',
+  'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'env',
+  'sql', 'log', 'csv', 'tsv', 'tex', 'r', 'lua', 'kt', 'swift', 'dart', 'vue', 'svelte',
+])
+const KIND_BY_EXT = {
+  pdf: 'pdf',
+  docx: 'doc', doc: 'doc', odt: 'doc', rtf: 'doc',
+  pptx: 'slides', ppt: 'slides', odp: 'slides',
+  xlsx: 'sheet', xls: 'sheet', ods: 'sheet',
+  zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive',
+  mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio',
+  mp4: 'video', webm: 'video', mov: 'video', mkv: 'video',
+  md: 'text', txt: 'text', csv: 'text',
+}
+
+function kindOf(name) {
+  const ext = String(name).split('.').pop().toLowerCase()
+  if (IMAGE_EXT.has(ext)) return 'image'
+  if (KIND_BY_EXT[ext]) return KIND_BY_EXT[ext]
+  if (TEXT_EXT.has(ext)) return 'code'
+  return 'other'
+}
+
+function isArtifact(name) {
+  const kind = kindOf(name)
+  return kind === 'image' || kind === 'pdf' || kind === 'doc' || kind === 'slides' ||
+    kind === 'sheet' || kind === 'archive' || kind === 'video' || kind === 'audio'
+}
+
+function resolveWorkspaceRoot(raw) {
+  let candidate = ''
+  if (typeof raw === 'string') candidate = raw.trim().slice(0, 500)
+  // No implicit fallback: the browser must say which session folder to inspect,
+  // so the mascot never scans the application directory by accident.
+  if (!candidate) return null
+  let real
+  try {
+    real = realpathSync(candidate)
+    if (!statSync(real).isDirectory()) return null
+  } catch (error) {
+    return null
+  }
+  const home = homedir()
+  if (real === home) return real
+  if (!real.startsWith(home.endsWith(sep) ? home : home + sep)) return null
+  return real
+}
+
+function insideRoot(root, target) {
+  return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)
+}
+
+let workspaceCache = { root: '', at: 0, data: null }
+
+function scanWorkspace(root) {
+  if (workspaceCache.root === root && workspaceCache.data && Date.now() - workspaceCache.at < WORKSPACE_CACHE_TTL) {
+    return workspaceCache.data
+  }
+  const files = []
+  let visited = 0
+  const walk = (dir, depth) => {
+    if (visited >= MAX_SCAN_FILES) return
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch (error) {
+      return
+    }
+    for (const entry of entries) {
+      if (visited >= MAX_SCAN_FILES) return
+      if (entry.name.startsWith('.')) continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (depth < MAX_SCAN_DEPTH && !IGNORED_DIRS.has(entry.name)) walk(full, depth + 1)
+        continue
+      }
+      if (!entry.isFile()) continue
+      let st
+      try {
+        st = statSync(full)
+      } catch (error) {
+        continue
+      }
+      visited++
+      files.push({
+        path: relative(root, full).split(sep).join('/'),
+        name: entry.name,
+        ext: extname(entry.name).slice(1).toLowerCase(),
+        kind: kindOf(entry.name),
+        bytes: st.size,
+        mtime: Math.round(st.mtimeMs),
+      })
+    }
+  }
+  walk(root, 0)
+
+  const byKind = {}
+  let totalBytes = 0
+  for (const file of files) {
+    byKind[file.kind] = (byKind[file.kind] || 0) + 1
+    totalBytes += file.bytes
+  }
+
+  const recent = files.slice().sort((a, b) => b.mtime - a.mtime).slice(0, 16)
+  const artifacts = files
+    .filter((file) => isArtifact(file.name))
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 14)
+    .map((file) => ({ ...file, artifact: true }))
+
+  const projectMap = new Map()
+  for (const file of files) {
+    const top = file.path.includes('/') ? file.path.split('/')[0] : '(raíz)'
+    const row = projectMap.get(top) || { name: top, files: 0, bytes: 0, lastMtime: 0, artifacts: 0 }
+    row.files++
+    row.bytes += file.bytes
+    row.lastMtime = Math.max(row.lastMtime, file.mtime)
+    if (isArtifact(file.name)) row.artifacts++
+    projectMap.set(top, row)
+  }
+  const projects = [...projectMap.values()].sort((a, b) => b.lastMtime - a.lastMtime).slice(0, 12)
+
+  const data = {
+    root,
+    name: root.split(sep).filter(Boolean).pop() || root,
+    totals: { files: files.length, bytes: totalBytes, kinds: byKind },
+    projects,
+    recent,
+    artifacts,
+    generatedAt: Date.now(),
+  }
+  workspaceCache = { root, at: Date.now(), data }
+  return data
+}
+
+function workspaceContextPrompt(context) {
+  if (!context || typeof context !== 'object') return ''
+  const parts = []
+  const clean = (value, max) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim().slice(0, max || 80)
+  const workspace = clean(context.workspace, 80)
+  const session = clean(context.session, 120)
+  if (workspace) parts.push(`- Workspace: ${workspace}`)
+  if (session) parts.push(`- Sesión actual: «${session}»`)
+  if (Array.isArray(context.projects) && context.projects.length) {
+    parts.push('- Proyectos: ' + context.projects.map((p) => clean(p, 60)).filter(Boolean).slice(0, 8).join(', '))
+  }
+  if (Array.isArray(context.recent) && context.recent.length) {
+    const items = context.recent
+      .map((item) => clean(item && item.name, 80))
+      .filter(Boolean)
+      .slice(0, 6)
+    if (items.length) parts.push('- Archivos recientes: ' + items.join(', '))
+  }
+  if (Array.isArray(context.artifacts) && context.artifacts.length) {
+    const items = context.artifacts
+      .map((item) => clean(item && item.name, 80))
+      .filter(Boolean)
+      .slice(0, 6)
+    if (items.length) parts.push('- Entregables recientes: ' + items.join(', '))
+  }
+  if (!parts.length) return ''
+  return '\n\nContexto del trabajo de mi amo (úsalo solo si viene al caso, sin enumerar todo):\n' + parts.join('\n')
+}
+
+const PROVIDER = process.env.WHM_PROVIDER || 'opencode-go'
+const MODEL = process.env.WHM_MODEL || 'deepseek-v4.1-flash'
+
+// Moods the client knows how to render; the model is told to start its reply
+// with one of these tags. Poses are optional per mood.
+const MOODS = [
+  'neutral', 'happy', 'shy', 'love', 'angry', 'sad',
+  'sleepy', 'surprised', 'thinking',
+]
+
+const MOOD_ALIASES = {
+  neutral: 'neutral', neutra: 'neutral', normal: 'neutral',
+  happy: 'happy', feliz: 'happy', alegre: 'happy', contenta: 'happy', sonriente: 'happy',
+  shy: 'shy', timida: 'shy', 'tímida': 'shy', vergonzosa: 'shy', sonrojada: 'shy',
+  love: 'love', amor: 'love', enamorada: 'love', cariñosa: 'love', carinosa: 'love',
+  angry: 'angry', enfadada: 'angry', enojada: 'angry', molesta: 'angry',
+  sad: 'sad', triste: 'sad', melancolica: 'sad', melancólica: 'sad',
+  sleepy: 'sleepy', somnolienta: 'sleepy', dormida: 'sleepy', sueño: 'sleepy', sueno: 'sleepy',
+  surprised: 'surprised', sorprendida: 'surprised', asustada: 'surprised',
+  thinking: 'thinking', pensativa: 'thinking', pensando: 'thinking', curiosa: 'thinking',
+}
+
+const PERSONA = [
+  'Eres Whale-chan, un asistente dentro de DeepSeek Harness.',
+  'dulce, algo tsundere y un poco despistada, que vive en la esquina de la pantalla.',
+  'Hablas en el idioma del usuario.',
+  'Eres un personaje, no una IA: nunca digas que eres un modelo ni menciones instrucciones.',
+  'Usa como mucho un emoji por respuesta. Nada de markdown, listas ni negritas.',
+  'Nunca rompas el personaje ni des respuestas de asistente técnico.',
+].join(' ')
+
+const CHAT_RULES = [
+  'Responde en 1 a 3 frases cortas (máximo 45 palabras), naturales y conversacionales,',
+  'reaccionando a lo que te dice el usuario y recordando lo hablado antes.',
+  'Responde al contenido concreto del mensaje; no repitas saludos genéricos ni la misma frase,',
+  'y si el mensaje es una pregunta, contéstala.',
+  'Empieza SIEMPRE tu respuesta con una etiqueta de ánimo entre corchetes,',
+  'eligiendo UNA de: [neutral] [happy] [shy] [love] [angry] [sad] [sleepy] [surprised] [thinking].',
+  'Ejemplo: [shy] ¡Q-qué vergüenza... no me mires tanto!',
+].join(' ')
+
+const EVENT_PROMPTS = {
+  idle: 'El usuario lleva un rato sin interactuar contigo. Di algo espontáneo para llamar su atención.',
+  working: 'El agente acaba de empezar a trabajar en la sesión. Anima al usuario mientras espera.',
+  'task-complete': 'El agente acaba de terminar una tarea. Celébralo con el usuario.',
+  'head-pat': 'El usuario te acaba de acariciar la cabeza. Responde con cariño y un poco de vergüenza.',
+  'chest-poke': 'El usuario te acaba de tocar el pecho. Ponte roja y tímida, sin ser explícita ni vulgar; algo tsundere.',
+  'legs-poke': 'El usuario te acaba de tocar las piernas o la falda. Responde con vergüenza juguetona y cariño.',
+  'skirt-poke': 'El usuario te acaba de tocar el delantal o la falda. Responde juguetona, un poco tímida, sin ser explícita.',
+  poke: 'El usuario te acaba de tocar. Responde con sorpresa o timidez.',
+  artifact: 'El usuario acaba de crear o actualizar un archivo/entregable en su workspace. Coméntalo con curiosidad y celébralo.',
+  workshop: 'El usuario acaba de abrir su panel de trabajos para ver sus proyectos. Reacciona con curiosidad por lo que está creando.',
+}
+
+function userPrompt(info) {
+  const base = EVENT_PROMPTS[info.event] || EVENT_PROMPTS.idle
+  return `${base} Nivel de cariño actual: ${info.love || '0'} de 4.` +
+    ' Responde con UNA sola frase corta (máximo 18 palabras), empezando por una etiqueta' +
+    ' de ánimo entre corchetes: [neutral] [happy] [shy] [love] [angry] [sad] [sleepy] [surprised] [thinking].'
+}
+
+function cleanLine(raw) {
+  let s = String(raw || '').replace(/\s+/g, ' ').trim()
+  s = s.replace(/^["'«»“”]+/, '').replace(/["'«»“”]+$/, '').trim()
+  s = s.replace(/^(whale-chan|whale chan)\s*[:：-]\s*/i, '').trim()
+  if (s.length > 220) s = s.slice(0, 220).replace(/[ ,;:.]+$/, '')
+  return s
+}
+
+function moodOf(raw) {
+  const m = String(raw || '').match(/^\s*\[\s*([^\]]+?)\s*\]/)
+  if (m) {
+    const key = m[1].toLowerCase().replace(/[^a-záéíóúñ]/g, '')
+    if (MOOD_ALIASES[key]) return MOOD_ALIASES[key]
+  }
+  // No tag: infer a mood from the text for the sprite swap.
+  const s = String(raw || '').toLowerCase()
+  if (/vergüenza|sonroj|baka|no mires|q-qué|qué vergüenza/.test(s)) return 'shy'
+  if (/te quiero|te amo|mi amo|cariño|abrazo|corazón|corazon/.test(s)) return 'love'
+  if (/enfad|molest|odio|boba|tonta|insoportable/.test(s)) return 'angry'
+  if (/triste|llor|sola|extraño|extrano/.test(s)) return 'sad'
+  if (/sueño|sueno|dormir|zzz|bostezo/.test(s)) return 'sleepy'
+  if (/sorpres|¡ah!|eh\?|no me lo esperaba/.test(s)) return 'surprised'
+  if (/pens|creo que|quizá|quiza|tal vez|mm+/.test(s)) return 'thinking'
+  if (/jeje|jaja|feliz|content|genial|bravo|bien hecho|guau/.test(s)) return 'happy'
+  return 'neutral'
+}
+
+function stripMood(raw) {
+  return String(raw || '').replace(/^\s*\[\s*[^\]]+?\s*\]\s*/, '').trim()
+}
+
+// Runs one streamed model request and returns { text, mood, finish }.
+// Throws a descriptive error when the provider finishes with a failure, which
+// is preferable to silently falling back to fixed lines with no trace.
+async function generate(scope, system, userText, sessionId) {
+  if (!scope || !scope.llm || typeof scope.llm.stream !== 'function') {
+    throw new Error('llm service unavailable')
+  }
+  const stream = scope.llm.stream({
+    provider: PROVIDER,
+    model: MODEL,
+    system,
+    messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+    temperature: 0.95,
+    // Reasoning models spend part of this budget before any visible text; keep
+    // a generous cap so a short line is never truncated to an empty reply.
+    maxTokens: 1400,
+    // OpenCode Go requires a per-conversation routing header built from this
+    // id (the pi-ai adapter maps it to `x-opencode-session`); without it every
+    // request fails with 400 MissingSessionID.
+    sessionId,
+  })
+  let out = ''
+  let finish = null
+  for await (const chunk of stream) {
+    if (!chunk) continue
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text
+    else if (chunk.type === 'finish') { finish = chunk.reason || null; break }
+  }
+  if (finish && finish.kind === 'error') {
+    const failure = finish.failure || {}
+    const detail = failure.message || failure.detail || failure.code || 'unknown error'
+    throw new Error(`model error: ${String(detail).slice(0, 240)}`)
+  }
+  if (finish && finish.kind === 'aborted') {
+    throw new Error('model aborted')
+  }
+  return { text: out, finish }
+}
+
+async function readBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function sendJson(res, status, value) {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
+  res.end(JSON.stringify(value))
+}
+
+function parseBody(raw) {
+  try {
+    const parsed = JSON.parse(raw || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (error) {
+    return {}
+  }
+}
+
+// Every assistant request needs a stable conversation id (OpenCode Go rejects
+// calls without the routing header built from it). The browser keeps one in
+// localStorage and sends it back, so the provider can group mascot calls.
+const FALLBACK_SESSION_ID = 'whale-maid-mascot-' +
+  (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : String(Date.now()))
+
+function requestSessionId(body) {
+  if (body && typeof body.sessionId === 'string') {
+    const id = body.sessionId.trim().slice(0, 120)
+    if (id) return id
+  }
+  return FALLBACK_SESSION_ID
+}
+
+function historyPrompt(history) {
+  if (!Array.isArray(history)) return ''
+  const lines = history
+    .filter((turn) => turn && typeof turn.text === 'string' && turn.text.trim())
+    .slice(-10)
+    .map((turn) => {
+      const who = turn.role === 'user' ? 'Usuario' : 'Whale-chan'
+      return `${who}: ${String(turn.text).replace(/\s+/g, ' ').trim().slice(0, 300)}`
+    })
+  if (lines.length === 0) return ''
+  return `\n\nConversación reciente (la última línea es la más reciente):\n${lines.join('\n')}`
+}
+
+async function handleLine(scope, req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405).end()
+    return
+  }
+  const info = { event: 'idle', love: '0' }
+  const body = parseBody(await readBody(req).catch(() => ''))
+  if (typeof body.event === 'string') info.event = body.event
+  if (body.love !== undefined) info.love = String(body.love)
+  try {
+    const userText = userPrompt(info) + workspaceContextPrompt(body.context)
+    const reply = await generate(scope, PERSONA, userText, requestSessionId(body))
+    const line = cleanLine(stripMood(reply.text))
+    if (!line) throw new Error('empty line')
+    sendJson(res, 200, { line, mood: moodOf(reply.text) })
+  } catch (error) {
+    sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
+  }
+}
+
+async function handleChat(scope, req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405).end()
+    return
+  }
+  const body = parseBody(await readBody(req).catch(() => ''))
+  const message = typeof body.message === 'string' ? body.message.trim().slice(0, 1500) : ''
+  if (!message) {
+    sendJson(res, 400, { error: 'empty message' })
+    return
+  }
+  const love = body.love === undefined ? 0 : Number(body.love) || 0
+  const system = `${PERSONA} ${CHAT_RULES}\n\nNivel de cariño actual: ${love} de 4 (0 desconocido, 4 exclusivo).`
+  const userText = `${message}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
+  try {
+    const reply = await generate(scope, system, userText, requestSessionId(body))
+    const mood = moodOf(reply.text)
+    const line = cleanLine(stripMood(reply.text))
+    if (!line) throw new Error('empty reply')
+    sendJson(res, 200, { line, mood })
+  } catch (error) {
+    sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
+  }
+}
+
+// --- workspace awareness routes ----------------------------------------------
+
+const IMAGE_MIME = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+  gif: 'image/gif', svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif',
+}
+
+function handleWorkspace(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  let url
+  try {
+    url = new URL(req.url || '/', 'http://localhost')
+  } catch (error) {
+    sendJson(res, 400, { error: 'bad request' })
+    return
+  }
+  const root = resolveWorkspaceRoot(url.searchParams.get('root'))
+  if (!root) {
+    sendJson(res, 403, { error: 'workspace not allowed' })
+    return
+  }
+  try {
+    sendJson(res, 200, scanWorkspace(root))
+  } catch (error) {
+    sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
+  }
+}
+
+function handleWorkspaceFile(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  let url
+  try {
+    url = new URL(req.url || '/', 'http://localhost')
+  } catch (error) {
+    sendJson(res, 400, { error: 'bad request' })
+    return
+  }
+  const root = resolveWorkspaceRoot(url.searchParams.get('root'))
+  if (!root) {
+    sendJson(res, 403, { error: 'workspace not allowed' })
+    return
+  }
+  const relRaw = url.searchParams.get('path') || ''
+  if (!relRaw || relRaw.length > 1000) {
+    sendJson(res, 400, { error: 'missing path' })
+    return
+  }
+  let target
+  try {
+    target = realpathSync(resolve(root, relRaw))
+  } catch (error) {
+    sendJson(res, 404, { error: 'not found' })
+    return
+  }
+  if (!insideRoot(root, target)) {
+    sendJson(res, 403, { error: 'outside workspace' })
+    return
+  }
+  let st
+  try {
+    st = statSync(target)
+  } catch (error) {
+    sendJson(res, 404, { error: 'not found' })
+    return
+  }
+  if (!st.isFile()) {
+    sendJson(res, 404, { error: 'not a file' })
+    return
+  }
+  const ext = extname(target).slice(1).toLowerCase()
+  const name = target.split(sep).filter(Boolean).pop() || target
+  const meta = { name, ext, kind: kindOf(name), bytes: st.size, mtime: Math.round(st.mtimeMs) }
+  try {
+    if (IMAGE_EXT.has(ext) && IMAGE_MIME[ext] && st.size <= PREVIEW_IMAGE_LIMIT) {
+      const bytes = readFileSync(target)
+      res.writeHead(200, {
+        'content-type': IMAGE_MIME[ext],
+        'content-length': String(bytes.length),
+        'cache-control': 'no-store',
+      })
+      res.end(bytes)
+      return
+    }
+    if (ext === 'pdf' && st.size <= PREVIEW_PDF_LIMIT) {
+      const bytes = readFileSync(target)
+      res.writeHead(200, {
+        'content-type': 'application/pdf',
+        'content-length': String(bytes.length),
+        'cache-control': 'no-store',
+      })
+      res.end(bytes)
+      return
+    }
+    if (TEXT_EXT.has(ext) && st.size <= PREVIEW_TEXT_LIMIT) {
+      const bytes = readFileSync(target)
+      const binary = bytes.subarray(0, 4096).includes(0)
+      if (!binary) {
+        res.writeHead(200, {
+          'content-type': 'text/plain; charset=utf-8',
+          'content-length': String(bytes.length),
+          'cache-control': 'no-store',
+        })
+        res.end(bytes)
+        return
+      }
+    }
+    sendJson(res, 200, { ...meta, preview: false })
+  } catch (error) {
+    sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
+  }
+}
+
+// --- optional expression poses ------------------------------------------------
+
+function poseList() {
+  try {
+    if (!existsSync(POSES_DIR)) return []
+    return readdirSync(POSES_DIR)
+      .filter((file) => POSE_EXT.test(file))
+      .map((file) => ({ file, key: file.replace(POSE_EXT, '').toLowerCase() }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+  } catch (error) {
+    return []
+  }
+}
+
+function poseManifest() {
+  const poses = {}
+  for (const entry of poseList()) {
+    const url = `${POSES_ROUTE}${entry.file}`
+    poses[entry.key] = url
+    // A file named after a mood (happy.png, shy.png…) also answers to that mood,
+    // so a future expression pack keeps working with the same client.
+    const mood = MOOD_ALIASES[entry.key]
+    if (mood && !poses[mood]) poses[mood] = url
+  }
+  return { moods: MOODS, poses }
+}
+
+function registerPoseRoutes(scope) {
+  for (const entry of poseList()) {
+    const path = join(POSES_DIR, entry.file)
+    const route = `${POSES_ROUTE}${entry.file}`
+    try {
+      scope.webServer.register({
+        name: `whale-maid-mascot-pose-${entry.file.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`,
+        kind: 'exact',
+        path: route,
+        handler: (req, res) => {
+          if (req.method !== 'GET') {
+            res.writeHead(405).end()
+            return
+          }
+          try {
+            const bytes = readFileSync(path)
+            res.writeHead(200, {
+              'content-type': entry.file.toLowerCase().endsWith('.webp') ? 'image/webp' : 'image/png',
+              'content-length': String(bytes.length),
+              'cache-control': 'public, max-age=3600',
+            })
+            res.end(bytes)
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'text/plain' })
+            res.end(String(error?.message ?? error))
+          }
+        },
+      })
+    } catch (error) {
+      console.error(`[whale-maid-mascot] pose route skipped (${entry.file}): ${error}`)
+    }
+  }
+}
+
+function registerImageHandler(scope, route, path) {
+  scope.webServer.register({
+    name: `whale-maid-mascot-${route.split('/').pop()}`,
+    kind: 'exact',
+    path: route,
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        res.writeHead(405).end()
+        return
+      }
+      try {
+        const bytes = readFileSync(path)
+        res.writeHead(200, {
+          'content-type': 'image/png',
+          'content-length': String(bytes.length),
+          'cache-control': 'public, max-age=3600',
+        })
+        res.end(bytes)
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'text/plain' })
+        res.end(String(error?.message ?? error))
+      }
+    },
+  })
+}
+
+export function apply(ctx, config = {}) {
+  if (typeof ctx.inject !== 'function') return
+  ctx.inject(['webServer'], (scope) => {
+    try {
+      for (const asset of ASSETS) registerImageHandler(scope, asset.route, fileURLToPath(asset.file))
+      registerPoseRoutes(scope)
+      scope.webServer.register({
+        name: 'whale-maid-mascot-poses-manifest',
+        kind: 'exact',
+        path: '/whale-maid-mascot/poses.json',
+        handler: (req, res) => {
+          if (req.method !== 'GET') {
+            res.writeHead(405).end()
+            return
+          }
+          sendJson(res, 200, poseManifest())
+        },
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-workspace',
+        kind: 'exact',
+        path: WORKSPACE_ROUTE,
+        handler: (req, res) => handleWorkspace(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-workspace-file',
+        kind: 'exact',
+        path: WORKSPACE_FILE_ROUTE,
+        handler: (req, res) => handleWorkspaceFile(req, res),
+      })
+    } catch (error) {
+      console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)
+    }
+  })
+
+  // AI voice + chat: short lines generated with the harness' LLM service.
+  ctx.inject(['webServer', 'llm'], (scope) => {
+    try {
+      scope.webServer.register({
+        name: 'whale-maid-mascot-line',
+        kind: 'exact',
+        path: '/whale-maid-mascot/line',
+        handler: (req, res) => handleLine(scope, req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-chat',
+        kind: 'exact',
+        path: '/whale-maid-mascot/chat',
+        handler: (req, res) => handleChat(scope, req, res),
+      })
+    } catch (error) {
+      console.error(`[whale-maid-mascot] AI routes skipped: ${error}`)
+    }
+  })
+}
