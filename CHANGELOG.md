@@ -13,6 +13,9 @@ First public release of this extended version. It is based on
 v1.0.0 (MIT) and keeps its base interaction model (draggable in-page pet, tap
 zones, affection, speech bubbles, outfit switching).
 
+Published on npm as **[`dsh-whale-maid-mascot@1.1.0`](https://www.npmjs.com/package/dsh-whale-maid-mascot)**
+(install it from DSH's plugin dialog with the package name).
+
 ### Added
 
 - **Chat panel (💬)**: talks to Whale-chan using the DSH-configured model through

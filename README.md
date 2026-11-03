@@ -1,5 +1,8 @@
 # Whale-chan · DeepSeek 娘 mascot for DeepSeek Harness 🐋
 
+[![npm version](https://img.shields.io/npm/v/dsh-whale-maid-mascot.svg)](https://www.npmjs.com/package/dsh-whale-maid-mascot)
+[![host tests](https://github.com/dariodemh/dsh-whale-maid-mascot/actions/workflows/ci.yml/badge.svg)](https://github.com/dariodemh/dsh-whale-maid-mascot/actions/workflows/ci.yml)
+
 > **Provenance — this is not the original plugin.**
 > This repository is a standalone, heavily extended derivative of
 > **[yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)**
@@ -52,7 +55,19 @@ The upstream plugin provides the base in-page pet (dragging, tap zones, affectio
 
 ## Install
 
-### Option A — from the DSH plugin manager (recommended)
+### Option A — npm package (recommended)
+
+The plugin is published on npm: **[dsh-whale-maid-mascot](https://www.npmjs.com/package/dsh-whale-maid-mascot)**.
+
+In DSH's plugin installation dialog, enter:
+
+```text
+dsh-whale-maid-mascot
+```
+
+To pin this release, use `dsh-whale-maid-mascot@1.1.0`. Wait for the install to finish, fully restart DSH (closing the window may not quit the app), and look at the bottom-right corner of the web UI. The menu name depends on your DSH version (usually *Settings → Plugins*).
+
+### Option B — directly from GitHub
 
 In DSH's plugin installation dialog, enter this spec and confirm:
 
@@ -60,9 +75,7 @@ In DSH's plugin installation dialog, enter this spec and confirm:
 github:dariodemh/dsh-whale-maid-mascot#v1.1.0
 ```
 
-Wait for the install to finish, fully restart DSH (closing the window may not quit the app), and look at the bottom-right corner of the web UI. The menu name depends on your DSH version (usually *Settings → Plugins*).
-
-### Option B — local clone (development / manual install)
+### Option C — local clone (development / manual install)
 
 This is the path tested on Windows with DSH Desktop `0.2.1-rc.5`. Your DSH profile lives in `%USERPROFILE%\.dsh` (or `$DSH_HOME`); this example uses the default profile name `desktop`.
 
@@ -239,7 +252,7 @@ Proyecto fan **no oficial** y derivado del plugin original de **yefeng7531** (MI
 
 ## Instalación
 
-**Opción A (recomendada)** — en el cuadro de instalación de complementos de DSH, pega:
+**Opción A (recomendada)** — instálalo desde el gestor de complementos de DSH con el paquete de npm **`dsh-whale-maid-mascot`** (o fija `dsh-whale-maid-mascot@1.1.0`). También puedes pegar el spec de GitHub:
 
 ```text
 github:dariodemh/dsh-whale-maid-mascot#v1.1.0
@@ -247,7 +260,7 @@ github:dariodemh/dsh-whale-maid-mascot#v1.1.0
 
 Reinicia DSH por completo (cerrar la ventana puede no ser suficiente) y mira la esquina inferior derecha.
 
-**Opción B (manual)** — clona el repo en una ruta sin espacios, copia la carpeta en `%USERPROFILE%\.dsh\plugins\dsh-whale-maid-mascot` (sin `shots/`, `test/` ni `.git/`), añade `"dsh-whale-maid-mascot": "file:../../plugins/dsh-whale-maid-mascot"` a las dependencias del `package.json` de tu perfil y el id a `dsh.profile.bundles`, ejecuta el `pnpm install` del runtime de DSH y reinicia. Los pasos detallados están en la sección inglesa **Install → Option B**.
+**Opción B (manual)** — clona el repo en una ruta sin espacios, copia la carpeta en `%USERPROFILE%\.dsh\plugins\dsh-whale-maid-mascot` (sin `shots/`, `test/` ni `.git/`), añade `"dsh-whale-maid-mascot": "file:../../plugins/dsh-whale-maid-mascot"` a las dependencias del `package.json` de tu perfil y el id a `dsh.profile.bundles`, ejecuta el `pnpm install` del runtime de DSH y reinicia. Los pasos detallados están en la sección inglesa **Install → Option C**.
 
 Para desinstalar: quita la dependencia y la entrada de bundles del perfil, vuelve a ejecutar `pnpm install` y reinicia DSH.
 
