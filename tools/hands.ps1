@@ -13,7 +13,7 @@ param(
   [int]$Times = 1
 )
 
-# hands.ps1 - manos de Cala en Windows: ventanas, captura, mouse, teclado.
+# hands.ps1 - manos de la mascota en Windows: ventanas, captura, mouse, teclado.
 # Coordenadas fisicas (proceso DPI-aware). Requiere -ExecutionPolicy Bypass.
 
 $ErrorActionPreference = 'Stop'

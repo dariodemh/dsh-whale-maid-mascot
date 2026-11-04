@@ -6,6 +6,19 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.4.0 — 2026-11-04
+
+### Changed
+
+- **Persona extracted to `dsh/persona.md`**: the default character text no
+  longer lives inline in `dsh/config.js`; it ships as a file with the name as
+  `{{name}}`. `personaText()` resolves, in order: `persona` in config (full
+  replacement, as before), a private `~/.dsh/persona.md`, the packaged
+  `dsh/persona.md`, and an embedded copy if no file can be read.
+- **Backward compatible**: with the same `personaName` and memory, the prompt
+  is byte-identical to 2.3.0 (pinned by `test/persona.test.mjs`). Existing
+  `persona`/`personaName` settings keep working unchanged.
+
 ## 2.3.0 — 2026-11-03
 
 ### Added

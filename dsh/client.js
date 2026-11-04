@@ -2154,7 +2154,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         document.body.appendChild(box)
       }
 
-      // The shared session is the same one the mascot uses on Telegram: reload the
+      // This is the same shared session the mascot uses on Telegram: reload the
       // visible transcript from it so both surfaces show one conversation.
       function loadSharedHistory() {
         fetch('/whale-maid-mascot/history')

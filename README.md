@@ -124,6 +124,21 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 | `turnTimeoutMs` | `900000` | Max wait for one agent turn |
 | `maxPhotoBytes` | `10485760` | Largest Telegram photo she downloads |
 
+### Customize the character
+
+The default text ships with the package (`dsh/persona.md`), with the name as
+`{{name}}`. To change it, from narrowest to widest scope:
+
+- **Just the name**: `"personaName": "…"` in `~/.dsh/whale-maid.json`.
+- **The full text, privately**: create `~/.dsh/persona.md` (same format,
+  `{{name}}` included). It wins over the packaged one and survives updates.
+- **From the config**: `persona` in `~/.dsh/whale-maid.json` or in the profile
+  row; it replaces everything and wins over both files.
+
+Memory is not part of the text: it lives in
+`~/.dsh/whale-maid-mascot/memory.json` and is appended to the end of the prompt
+in all three cases.
+
 ## Security
 
 - **The default permission preset is `danger-full-access`**: inside the session

@@ -11,8 +11,11 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh')
+
+const PERSONA_FILE = fileURLToPath(new URL('./persona.md', import.meta.url))
 
 const CONFIG_FILE = join(DSH_HOME, 'whale-maid.json')
 const STATE_FILE = join(DSH_HOME, 'whale-maid.state.json')
@@ -167,6 +170,16 @@ export function personaText(config) {
   // Full replacement, so a deployment can speak any language or be another character.
   if (typeof config?.persona === 'string' && config.persona.trim() !== '') return config.persona.trim() + memoryBlock(memory)
   const name = config?.personaName || DEFAULTS.personaName
+  // Private override in ~/.dsh first, then the default shipped with the package.
+  for (const file of [join(DSH_HOME, 'persona.md'), PERSONA_FILE]) {
+    try {
+      const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim()
+      if (text !== '') return text.replaceAll('{{name}}', () => name) + memoryBlock(memory)
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  // Embedded copy of dsh/persona.md, used when no persona file can be read.
   const lines = [
     `Sos ${name}, un asistente dentro de DeepSeek Harness.`,
     'Respondé en el idioma en que te hablen.',
