@@ -14,6 +14,8 @@ import { apply } from '../dsh/index.js'
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = join(TEST_DIR, '..', 'tmp-workspace-fixture')
+// Keep long-term memory writes inside the fixture instead of the real home.
+process.env.WHM_MEMORY_DIR = join(FIXTURE, 'memory')
 
 // Workspace fixture used by the scanning/preview tests.
 const PNG_1PX = Buffer.from(
@@ -394,4 +396,60 @@ test('image uploads fail soft when no attachment backend is mounted', async () =
   })
   assert.equal(status, 503)
   assert.equal(body.code, 'NO_ATTACHMENTS')
+})
+
+// --- long-term memory ---------------------------------------------------------
+
+const MEMORY_USER = 'u-host-test-1234567890'
+
+test('memory route stores, returns and clears per-user memory', async () => {
+  const { routes } = harness(chunks('[neutral] Hola.'))
+  const memory = routes.get('/whale-maid-mascot/memory')
+  assert.ok(memory, 'memory route registered')
+
+  const empty = await get(memory, `/whale-maid-mascot/memory?userId=${MEMORY_USER}`)
+  assert.equal(empty.status, 200)
+  assert.equal(JSON.parse(empty.body.toString('utf8')).memory.name, '')
+
+  const named = await post(memory, { userId: MEMORY_USER, kind: 'name', text: 'Dari' })
+  assert.equal(named.status, 200)
+  await post(memory, { userId: MEMORY_USER, kind: 'preference', text: 'respuestas cortas' })
+  await post(memory, { userId: MEMORY_USER, kind: 'fact', text: 'trabaja en un informe trimestral' })
+
+  const got = JSON.parse((await get(memory, `/whale-maid-mascot/memory?userId=${MEMORY_USER}`)).body.toString('utf8'))
+  assert.equal(got.memory.name, 'Dari')
+  assert.ok(got.memory.preferences.includes('respuestas cortas'))
+  assert.ok(got.memory.facts.includes('trabaja en un informe trimestral'))
+
+  const cleared = await post(memory, { userId: MEMORY_USER, action: 'clear' })
+  assert.equal(cleared.status, 200)
+  const after = JSON.parse((await get(memory, `/whale-maid-mascot/memory?userId=${MEMORY_USER}`)).body.toString('utf8'))
+  assert.deepEqual(after.memory.facts, [])
+  assert.deepEqual(after.memory.preferences, [])
+  assert.equal(after.memory.name, '')
+})
+
+test('memory rejects missing or invalid user ids', async () => {
+  const { routes } = harness(chunks('[neutral] Hola.'))
+  const memory = routes.get('/whale-maid-mascot/memory')
+  assert.equal((await get(memory, '/whale-maid-mascot/memory?userId=short')).status, 400)
+  assert.equal((await post(memory, { userId: 'bad user id!', kind: 'fact', text: 'x' })).status, 400)
+  assert.equal((await post(memory, { userId: MEMORY_USER, kind: 'fact', text: '' })).status, 400)
+})
+
+test('chat includes remembered facts in the system prompt and extracts explicit ones', async () => {
+  const { routes, scope } = harness(chunks('[neutral] Hola.'))
+  const memory = routes.get('/whale-maid-mascot/memory')
+  await post(memory, { userId: MEMORY_USER, kind: 'fact', text: 'prepara un informe trimestral' })
+
+  await post(routes.get('/whale-maid-mascot/chat'), { message: 'hola', userId: MEMORY_USER })
+  assert.match(String(scope.lastStreamOptions.system), /informe trimestral/)
+
+  await post(routes.get('/whale-maid-mascot/chat'), {
+    message: 'recuerda que prefiero respuestas cortas',
+    userId: MEMORY_USER,
+  })
+  const got = JSON.parse((await get(memory, `/whale-maid-mascot/memory?userId=${MEMORY_USER}`)).body.toString('utf8'))
+  const all = [...got.memory.preferences, ...got.memory.facts].join(' | ')
+  assert.match(all, /respuestas cortas/i)
 })

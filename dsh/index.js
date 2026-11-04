@@ -22,6 +22,14 @@ import { fileURLToPath } from 'node:url'
 import { join, resolve, relative, sep, extname } from 'node:path'
 import { homedir } from 'node:os'
 import { renderDoodle, DOODLE_KINDS } from './doodle.js'
+import {
+  getMemory,
+  remember,
+  clearMemory,
+  bumpTurns,
+  memoryPrompt,
+  validUserId,
+} from './memory.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -43,6 +51,94 @@ const DRAW_SVG_ROUTE = '/whale-maid-mascot/draw.svg'
 const DRAW_CACHE_TTL = 2 * 60 * 60 * 1000
 const DRAW_CACHE_MAX = 200
 const drawCache = new Map()
+
+// Long-term memory routes and extraction. Memory is local (see dsh/memory.js);
+// only stable, user-shared facts are kept, and the user can clear them.
+const MEMORY_ROUTE = '/whale-maid-mascot/memory'
+const MEMORY_TURN_CONSOLIDATION = 6
+const MEMORY_KINDS = new Set(['name', 'fact', 'preference'])
+const MEMORY_PATTERNS = [
+  {
+    kind: 'name',
+    re: /\b(?:me llamo|mi nombre es|puedes llamarme|llámame|llamame)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][\wÁÉÍÓÚÜÑáéíóúüñ.'-]{1,30})/i,
+  },
+  {
+    kind: 'fact',
+    re: /\b(?:recuerda que|acuérdate de que|acuerdate de que|ten en cuenta que|no olvides que|no te olvides de que)\s+(.{3,180})/i,
+  },
+  {
+    kind: 'preference',
+    re: /\b(?:prefiero|me gusta más|me gusta mas|no me gusta|no me gustan|evita|no uses|no quiero que)\s+(.{3,160})/i,
+  },
+]
+
+const MEMORY_SYSTEM = [
+  'Eres el sistema de memoria de una mascota compañera local.',
+  'Extrae SOLO datos estables y útiles para adaptar su comportamiento al usuario: nombre o trato preferido, preferencias claras de trato o formato, y hechos duraderos sobre su trabajo o proyectos.',
+  'Ignora estados de ánimo pasajeros, peticiones de una sola vez, datos sensibles (salud, política, religión, orientación sexual, credenciales, direcciones) y cualquier cosa que ya esté en la memoria actual.',
+  'Responde SOLO con líneas con el formato "nombre: X", "hecho: X" o "preferencia: X" (máximo 3 líneas, sin numeración ni explicación). Si no hay nada nuevo, responde "nada".',
+].join(' ')
+
+function memoryCandidates(message) {
+  const text = String(message || '').slice(0, 800)
+  const found = []
+  for (const pattern of MEMORY_PATTERNS) {
+    const match = text.match(pattern.re)
+    if (!match) continue
+    const value = String(match[1] || '')
+      .replace(/[.,;:!?]+$/, '')
+      .trim()
+      .slice(0, 200)
+    if (value.length < 2) continue
+    found.push({ kind: pattern.kind, text: value })
+    if (found.length >= 3) break
+  }
+  return found
+}
+
+async function rememberFromMessage(userId, message) {
+  if (!validUserId(userId)) return
+  for (const candidate of memoryCandidates(message)) {
+    await remember(userId, candidate.kind, candidate.text)
+  }
+}
+
+/**
+ * Once in a while ask the model to distil stable memories from the recent chat.
+ * Runs after the reply is sent, is bounded, and fails soft: memory must never
+ * break the conversation.
+ */
+async function consolidateMemory(scope, userId, history) {
+  if (!validUserId(userId) || !Array.isArray(history) || history.length === 0) return
+  try {
+    const current = await getMemory(userId)
+    const currentText = current
+      ? [
+        current.name ? `nombre: ${current.name}` : '',
+        ...(current.facts || []).map((fact) => `hecho: ${fact}`),
+        ...(current.preferences || []).map((preference) => `preferencia: ${preference}`),
+      ].filter(Boolean).join('\n')
+      : ''
+    const lines = history
+      .filter((turn) => turn && typeof turn.text === 'string' && turn.text.trim())
+      .slice(-10)
+      .map((turn) => `${turn.role === 'user' ? 'Usuario' : 'Whale-chan'}: ${String(turn.text).replace(/\s+/g, ' ').trim().slice(0, 300)}`)
+    if (!lines.length) return
+    const prompt = `Memoria actual:\n${currentText || '(vacía)'}\n\nConversación reciente:\n${lines.join('\n')}\n\nExtrae lo nuevo, si hay algo.`
+    const reply = await generate(scope, MEMORY_SYSTEM, [{ type: 'text', text: prompt }], `whale-memory-${userId}`)
+    const rows = String(reply.text || '').split(/\r?\n/).slice(0, 6)
+    for (const row of rows) {
+      const match = row.match(/^\s*(nombre|hecho|preferencia)\s*:\s*(.+)$/i)
+      if (!match) continue
+      const kind = match[1].toLowerCase() === 'hecho'
+        ? 'fact'
+        : match[1].toLowerCase() === 'preferencia' ? 'preference' : 'name'
+      await remember(userId, kind, match[2])
+    }
+  } catch (error) {
+    console.warn('[whale-maid-mascot] memory consolidation skipped:', error && error.message)
+  }
+}
 
 function makeDrawId() {
   return globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
@@ -554,7 +650,9 @@ async function handleLine(scope, req, res) {
   if (body.confidence !== undefined) info.confidence = String(body.confidence)
   else if (body.love !== undefined) info.confidence = String(body.love)
   try {
-    const userText = userPrompt(info) + workspaceContextPrompt(body.context)
+    const userId = validUserId(body.userId) ? body.userId : ''
+    const memoryText = userId ? await memoryPrompt(userId) : ''
+    const userText = userPrompt(info) + memoryText + workspaceContextPrompt(body.context)
     const reply = await generate(scope, PERSONA, [{ type: 'text', text: userText }], requestSessionId(body))
     const line = cleanLine(stripMood(stripDrawTag(reply.text)))
     if (!line) throw new Error('empty line')
@@ -601,7 +699,16 @@ async function handleChat(scope, req, res) {
   const confidence = body.confidence === undefined
     ? (body.love === undefined ? 0 : Number(body.love) || 0)
     : Number(body.confidence) || 0
-  const system = `${PERSONA} ${CHAT_RULES}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
+  const userId = validUserId(body.userId) ? body.userId : ''
+  if (userId) {
+    try {
+      await rememberFromMessage(userId, message)
+    } catch (error) {
+      console.warn('[whale-maid-mascot] memory extraction skipped:', error && error.message)
+    }
+  }
+  const memoryText = userId ? await memoryPrompt(userId) : ''
+  const system = `${PERSONA} ${CHAT_RULES}${memoryText}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
   let userText = `${message || 'Te envío una imagen.'}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
   if (admitted.blocks.length) {
     userText += `\n\nEl usuario ha adjuntado ${admitted.blocks.length} imagen(es) en este turno.`
@@ -620,9 +727,62 @@ async function handleChat(scope, req, res) {
     if (imageUrl) payload.imageUrl = imageUrl
     if (imageUrls.length) payload.images = imageUrls
     sendJson(res, 200, payload)
+    if (userId) {
+      bumpTurns(userId).then((user) => {
+        if (user && user.turns > 0 && user.turns % MEMORY_TURN_CONSOLIDATION === 0) {
+          consolidateMemory(scope, userId, body.history).catch(() => {})
+        }
+      }).catch(() => {})
+    }
   } catch (error) {
     sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
   }
+}
+
+// GET  /whale-maid-mascot/memory?userId=…       -> { ok, memory }
+// POST /whale-maid-mascot/memory { userId, kind, text }  -> remember one item
+// POST /whale-maid-mascot/memory { userId, action: 'clear' } -> wipe this user
+async function handleMemory(req, res) {
+  if (req.method === 'GET') {
+    let url
+    try {
+      url = new URL(req.url || '/', 'http://localhost')
+    } catch (error) {
+      sendJson(res, 400, { error: 'bad request' })
+      return
+    }
+    const userId = url.searchParams.get('userId') || ''
+    if (!validUserId(userId)) {
+      sendJson(res, 400, { error: 'invalid userId' })
+      return
+    }
+    const memory = await getMemory(userId)
+    sendJson(res, 200, { ok: true, memory })
+    return
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405).end()
+    return
+  }
+  const body = parseBody(await readBody(req).catch(() => ''))
+  const userId = body.userId
+  if (!validUserId(userId)) {
+    sendJson(res, 400, { error: 'invalid userId' })
+    return
+  }
+  if (body.action === 'clear') {
+    const memory = await clearMemory(userId)
+    sendJson(res, 200, { ok: true, memory })
+    return
+  }
+  const kind = typeof body.kind === 'string' ? body.kind : 'fact'
+  const text = typeof body.text === 'string' ? body.text : ''
+  if (!MEMORY_KINDS.has(kind) || !text.trim()) {
+    sendJson(res, 400, { error: 'invalid memory entry' })
+    return
+  }
+  const memory = await remember(userId, kind, text)
+  sendJson(res, 200, { ok: true, memory })
 }
 
 // POST /whale-maid-mascot/draw { kind, data } -> { url, kind, width, height }.
@@ -953,6 +1113,12 @@ export function apply(ctx, config = {}) {
         kind: 'exact',
         path: DRAW_SVG_ROUTE,
         handler: (req, res) => handleDrawSvg(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-memory',
+        kind: 'exact',
+        path: MEMORY_ROUTE,
+        handler: (req, res) => handleMemory(req, res),
       })
     } catch (error) {
       console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)

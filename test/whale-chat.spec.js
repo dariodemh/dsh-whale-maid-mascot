@@ -283,6 +283,40 @@ test('the pet follows viewport resizes and stays inside the screen', async ({ pa
   expect(saved.vh).toBe(900)
 })
 
+test('the memory menu shows what she remembers', async ({ page }) => {
+  await page.route('**/whale-maid-mascot/memory**', (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          memory: {
+            name: 'Dari',
+            facts: ['prepara un informe trimestral'],
+            preferences: ['respuestas cortas'],
+          },
+        }),
+      })
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, memory: { name: '', facts: [], preferences: [] } }),
+    })
+  })
+  await page.goto('/test/test.html')
+  await expect(page.locator('.wm-root')).toBeVisible()
+  await page.locator('.wm-root').dispatchEvent('contextmenu', { clientX: 260, clientY: 200 })
+  await page.locator('.wm-menu-item', { hasText: 'Memoria' }).click()
+  await page.locator('.wm-menu-item', { hasText: 'Ver lo que recuerda' }).click()
+  await expect(page.locator('.wm-chat.open')).toBeVisible()
+  const last = page.locator('.wm-chat-msg.sys').last()
+  await expect(last).toContainText('Dari')
+  await expect(last).toContainText('informe trimestral')
+  await expect(last).toContainText('respuestas cortas')
+})
+
 test('the pet never stays tilted after a drag, even if the release is lost', async ({ page }) => {
   await page.goto('/test/test.html')
   await expect(page.locator('.wm-root')).toBeVisible()

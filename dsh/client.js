@@ -49,6 +49,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var POSES_MANIFEST_URL = '/whale-maid-mascot/poses.json'
       var CHAT_URL = '/whale-maid-mascot/chat'
       var DRAW_URL = '/whale-maid-mascot/draw'
+      var MEMORY_URL = '/whale-maid-mascot/memory'
       var WORKSPACE_URL = '/whale-maid-mascot/workspace'
       var WORKSPACE_FILE_URL = '/whale-maid-mascot/workspace/file'
       var IMAGE_MAX_BYTES = 6 * 1024 * 1024
@@ -70,6 +71,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var LS_PROMPTS = 'dsh-whale-maid-mascot:prompts'
       var LS_PROACTIVE = 'dsh-whale-maid-mascot:proactive'
       var LS_AUTO_DRAW = 'dsh-whale-maid-mascot:auto-draw'
+      var LS_USER_ID = 'dsh-whale-maid-mascot:user-id'
 
       var GREETING_LINES = [
         '¡Hola! ¿En qué andas?',
@@ -178,6 +180,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var aiBtn = null
       var chatBtn = null
       var progressBtn = null
+      var memoryBtn = null
       var chatToggleBtn = null
       var notifEnabled = false
       var chatPanelEl = null
@@ -202,6 +205,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var proactiveTimer = null
       var drawSeq = 0
       var lastViewport = { w: 0, h: 0 }
+      var memoryCache = null
       var chatDrag = { active: false, offX: 0, offY: 0, moved: false }
       var bubbleLockUntil = 0
       var zoneSeq = 0
@@ -786,6 +790,15 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           requestProgressCard()
         })
 
+        memoryBtn = document.createElement('button')
+        memoryBtn.type = 'button'
+        memoryBtn.className = 'wm-menu-item'
+        memoryBtn.setAttribute('role', 'menuitem')
+        memoryBtn.textContent = '🧠 Memoria'
+        memoryBtn.addEventListener('click', function () {
+          onMemoryMenuClick()
+        })
+
         document.body.appendChild(menuEl)
         renderMainMenu()
       }
@@ -828,6 +841,40 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         menuEl.appendChild(proactiveBtn)
         menuEl.appendChild(autoDrawBtn)
         menuEl.appendChild(progressBtn)
+        menuEl.appendChild(memoryBtn)
+      }
+
+      function renderMemoryMenu() {
+        if (!menuEl) return
+        menuEl.innerHTML = ''
+        var back = document.createElement('button')
+        back.type = 'button'
+        back.className = 'wm-menu-item'
+        back.textContent = '← Volver'
+        back.addEventListener('click', renderMainMenu)
+        var view = document.createElement('button')
+        view.type = 'button'
+        view.className = 'wm-menu-item'
+        view.textContent = '🧠 Ver lo que recuerda'
+        view.addEventListener('click', function () {
+          hideContextMenu()
+          showMemory()
+        })
+        var clear = document.createElement('button')
+        clear.type = 'button'
+        clear.className = 'wm-menu-item danger'
+        clear.textContent = '🗑 Borrar mi memoria'
+        clear.addEventListener('click', function () {
+          hideContextMenu()
+          clearUserMemory()
+        })
+        menuEl.appendChild(back)
+        menuEl.appendChild(view)
+        menuEl.appendChild(clear)
+      }
+
+      function onMemoryMenuClick() {
+        renderMemoryMenu()
       }
 
       function onAiMenuClick() {
@@ -1730,7 +1777,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         if (now - aiLastAt < AI_MIN_INTERVAL) { say(fallback); return }
         aiLastAt = now
         aiPending = true
-        var payload = { event: event, love: loveLevel, sessionId: getLlmSessionId() }
+        var payload = { event: event, love: loveLevel, sessionId: getLlmSessionId(), userId: getUserId() }
         if (opts.context) payload.context = opts.context
         else if (CONTEXT_EVENTS[event]) payload.context = buildWorkContext()
         var ctrl = typeof AbortController === 'function' ? new AbortController() : null
@@ -1774,7 +1821,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         var init = {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ event: event, love: loveLevel, sessionId: getLlmSessionId() }),
+          body: JSON.stringify({ event: event, love: loveLevel, sessionId: getLlmSessionId(), userId: getUserId() }),
         }
         if (ctrl) init.signal = ctrl.signal
         fetch('/whale-maid-mascot/line', init)
@@ -1855,6 +1902,79 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           storeSet(LS_LLM_SESSION, llmSessionId)
         } catch (e) {}
         return llmSessionId
+      }
+
+      // Stable per-browser identity used to key the mascot's long-term memory.
+      var userId = ''
+      function getUserId() {
+        if (userId) return userId
+        try {
+          var saved = storeGet(LS_USER_ID)
+          if (saved && /^[A-Za-z0-9_-]{8,80}$/.test(saved)) {
+            userId = saved
+            return userId
+          }
+        } catch (e) {}
+        var random = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+        userId = ('u-' + random).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+        try {
+          storeSet(LS_USER_ID, userId)
+        } catch (e) {}
+        return userId
+      }
+
+      function fetchMemory() {
+        return fetch(MEMORY_URL + '?userId=' + encodeURIComponent(getUserId()), {
+          headers: { accept: 'application/json' },
+        }).then(function (res) {
+          return res.ok ? res.json() : null
+        }).catch(function () { return null })
+      }
+
+      function postMemory(payload) {
+        var body = Object.assign({ userId: getUserId() }, payload || {})
+        return fetch(MEMORY_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(function (res) {
+          return res.ok ? res.json() : null
+        }).catch(function () { return null })
+      }
+
+      function showMemory() {
+        openChat()
+        fetchMemory().then(function (data) {
+          memoryCache = data && data.memory ? data.memory : null
+          var memory = memoryCache || { name: '', facts: [], preferences: [] }
+          var lines = []
+          if (memory.name) lines.push('Nombre o trato: ' + memory.name)
+          ;(memory.facts || []).forEach(function (fact) { lines.push('· ' + fact) })
+          ;(memory.preferences || []).forEach(function (pref) { lines.push('· Preferencia: ' + pref) })
+          if (!lines.length) {
+            appendChatMessage('sys', 'Todavía no recuerdo nada de ti. Dime cosas como «me llamo …» o «recuerda que …» y las guardaré.')
+            say('Todavía no sé nada de ti... cuéntame algo.', 4500)
+          } else {
+            appendChatMessage('sys', '🧠 Lo que recuerdo de ti:\n' + lines.join('\n'))
+            say('Esto es lo que tengo apuntado de ti.', 4500)
+          }
+          if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight
+        })
+      }
+
+      function clearUserMemory() {
+        if (typeof window.confirm === 'function' && !window.confirm('¿Borrar la memoria que Whale-chan tiene de ti?')) return
+        postMemory({ action: 'clear' }).then(function (data) {
+          memoryCache = null
+          if (data && data.memory) memoryCache = data.memory
+          say('Memoria borrada. Empezamos de cero.', 4500)
+          if (chatBodyEl) {
+            appendChatMessage('sys', 'Memoria borrada.')
+            chatBodyEl.scrollTop = chatBodyEl.scrollHeight
+          }
+        })
       }
 
       function buildChatPanel() {
@@ -2381,6 +2501,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           confidence: loveLevel,
           style: style,
           sessionId: getLlmSessionId(),
+          userId: getUserId(),
           context: buildWorkContext(),
         }
         if (pendingImages.length) {

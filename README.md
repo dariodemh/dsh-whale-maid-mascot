@@ -54,6 +54,13 @@ The upstream plugin provides the base in-page pet (dragging, tap reactions, spee
 - Built-in previews: images, PDFs in an iframe, and text/code up to 200 KB; Office formats show metadata and point you to open them from the workspace.
 - She comments on new or updated deliverables every ~20 s (at most once a minute) and uses the summary when you chat with her.
 
+**🧠 Long-term memory**
+
+- She remembers stable things you tell her — your preferred name, how you like to be talked to, recurring projects — and adapts in later sessions instead of starting from zero.
+- She picks up explicit cues (*"me llamo …"*, *"recuerda que …"*, *"prefiero …"*) and, every few turns, quietly distils durable facts from the conversation.
+- Memory is **local** (`~/.dsh/whale-maid-mascot/memory.json`), keyed by a random per-browser id, bounded in size, and never sent anywhere except as part of the prompt to your own model.
+- Right-click → **🧠 Memoria** lets you see what she remembers or wipe it; sensitive data is intentionally excluded from extraction.
+
 **🗣️ Proactive companionship**
 
 - She starts short conversations on her own after a while, checks in while you work, and reacts when tasks finish. Frequency is configurable from the right-click menu (*Proactividad*: off / low / normal / high).
@@ -78,14 +85,14 @@ In DSH's plugin installation dialog, enter:
 dsh-whale-maid-mascot
 ```
 
-To pin this release, use `dsh-whale-maid-mascot@2.0.0`. Wait for the install to finish, fully restart DSH (closing the window may not quit the app), and look at the bottom-right corner of the web UI. The menu name depends on your DSH version (usually *Settings → Plugins*).
+To pin this release, use `dsh-whale-maid-mascot@2.1.0`. Wait for the install to finish, fully restart DSH (closing the window may not quit the app), and look at the bottom-right corner of the web UI. The menu name depends on your DSH version (usually *Settings → Plugins*).
 
 ### Option B — directly from GitHub
 
 In DSH's plugin installation dialog, enter this spec and confirm:
 
 ```text
-github:dariodemh/dsh-whale-maid-mascot#v2.0.0
+github:dariodemh/dsh-whale-maid-mascot#v2.1.0
 ```
 
 ### Option C — local clone (development / manual install)
@@ -170,6 +177,7 @@ If the configured provider/model does not exist in your DSH installation, the AI
 - Previews are capped: text/code 200 KB, images 8 MB, PDF 25 MB; scans stop at 4,000 files / depth 3 and skip `node_modules`, `.git`, `dist`, `.dsh`, `tmp` and similar folders.
 - No telemetry, no analytics, no extra listening port. All routes are served by DSH's own web server under `/whale-maid-mascot/*`.
 - Preferences (position, outfit, confidence, chat history, prompt presets) stay in your browser's `localStorage` under the `dsh-whale-maid-mascot:` prefix. Chat images are referenced by host URL, not stored as base64 in `localStorage`.
+- **Long-term memory** lives in `~/.dsh/whale-maid-mascot/memory.json` (override with `WHM_MEMORY_DIR`). It only contains the name/preferences/facts you share or that are distilled from the conversation; it is never uploaded. You can inspect or clear it at any time from the **🧠 Memoria** menu, and clearing a user's entry deletes it from the file.
 
 ## Host routes
 
@@ -183,6 +191,8 @@ If the configured provider/model does not exist in your DSH installation, the AI
 | `POST /whale-maid-mascot/draw` | Render a card → `{ url, kind, width, height }` (body: `kind`, `data`) |
 | `GET /whale-maid-mascot/draw.svg?id=<id>` | Generated SVG card |
 | `GET /whale-maid-mascot/image?id=<attachmentId>` | Echo of an uploaded image |
+| `GET /whale-maid-mascot/memory?userId=<id>` | What she remembers about this user (name, facts, preferences) |
+| `POST /whale-maid-mascot/memory` | Store one memory item (`{ userId, kind, text }`) or clear it (`{ userId, action: 'clear' }`) |
 | `GET /whale-maid-mascot/workspace?root=<session cwd>` | Workspace summary: projects, recent files, deliverables |
 | `GET /whale-maid-mascot/workspace/file?root=<cwd>&path=<rel>` | Safe preview: image, PDF or text (200 KB max), metadata otherwise |
 
@@ -192,6 +202,7 @@ If the configured provider/model does not exist in your DSH installation, the AI
 dsh/index.js          host plugin: sprites, poses, workspace routes, AI routes, image admission, draw routes
 dsh/client.js         browser plugin: pet, chat (with image attachments), works panel, cards, proactivity
 dsh/doodle.js         deterministic SVG card renderer (progress / celebrate / sticker / doodle)
+dsh/memory.js         local long-term memory store (name / facts / preferences, per user id)
 assets/               mascot_*.png + poses/*.png (CC BY-NC-SA 4.0, see ASSETS-LICENSE.md)
 assets/SOURCE.md      detailed source attribution for every image
 test/                 QA page, host route tests, doodle tests, Playwright specs
@@ -207,8 +218,8 @@ Node.js 20+ and npm/pnpm:
 ```bash
 npm install                 # or pnpm install
 npx playwright install chromium   # or set WHM_BROWSER_CHANNEL=msedge to reuse an installed browser
-npm test                    # 22 browser tests: chat, images, cards, panels, proactivity, explain cleanup
-node test/host-routes.test.mjs    # 20 host route tests (mock LLM, attachments, workspace fixture)
+npm test                    # 25 browser tests: chat, images, cards, memory, panels, proactivity, explain cleanup
+node test/host-routes.test.mjs    # 23 host route tests (mock LLM, attachments, memory, workspace fixture)
 node test/doodle.test.mjs         # 8 SVG doodle-engine tests
 ```
 
@@ -233,7 +244,7 @@ git fetch upstream
 ## Provenance, attribution and credits
 
 - **Original plugin (base of this repository)**: [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot) by **yefeng7531** — MIT, with a contribution by [Amakurai](https://github.com/Amakurai). This repository starts from that source (upstream `master` / v1.0.0) and is **not** the original project; full details in [NOTICE](NOTICE).
-- **What changed here**: AI chat with **image attachments in both directions** (upload + workspace/card images), a built-in **SVG card doodler**, workspace panel with safe previews, mood poses (school / hoodie / xiaohei), four-outfit cycle, explain panel, prompt presets, notifications, proactive check-ins and a neutral companion tone (no flirting), plus 20 host-route tests, 22 browser tests and 8 doodle tests — full list in [CHANGELOG.md](CHANGELOG.md).
+- **What changed here**: AI chat with **image attachments in both directions** (upload + workspace/card images), a built-in **SVG card doodler**, **long-term memory** (name, preferences, facts), workspace panel with safe previews, mood poses (school / hoodie / xiaohei), four-outfit cycle, explain panel, prompt presets, notifications, proactive check-ins and a neutral companion tone (no flirting), plus 23 host-route tests, 25 browser tests and 8 doodle tests — full list in [CHANGELOG.md](CHANGELOG.md).
 - **Want the original?** Install or clone `yefeng7531/dsh-whale-maid-mascot`; upstream issues and pull requests belong there.
 - **Character artwork**: 鲸鱼娘 / Whale-chan by **上善无形** ([Bilibili](https://space.bilibili.com/4456176)) — **CC BY-NC-SA 4.0**, non-commercial use only. Sources and modifications: [assets/SOURCE.md](assets/SOURCE.md) and [ASSETS-LICENSE.md](ASSETS-LICENSE.md).
 - **DeepSeek Harness**: DeepSeek. This is a personal fan project, not an official DeepSeek product.
@@ -272,14 +283,15 @@ Proyecto fan **no oficial** y derivado del plugin original de **yefeng7531** (MI
 - **🎨 Dibujos y tarjetas**: genera tarjetas de progreso, felicitación, stickers y garabatos en SVG, en local y sin APIs externas. Pídeselas en el chat, con el botón 🖼️ o con clic derecho → *Tarjeta de progreso*; también puede felicitarte con una tarjeta al terminar una tarea (desactivable).
 - **👀 Mis trabajos**: resume el workspace de la sesión (proyectos, archivos recientes y entregables) y permite previsualizar imágenes, PDF y texto. Solo puede leer la carpeta que le indica el navegador y siempre dentro de tu carpeta de usuario.
 - **🗣️ Compañera proactiva**: inicia conversaciones cortas tras un rato, hace check-in mientras trabajas y reacciona al terminar tareas. La frecuencia se ajusta en el menú contextual (*Proactividad*: off / low / normal / high).
+- **🧠 Memoria**: recuerda tu nombre o trato preferido, cómo te gusta que te hable y hechos estables de tus proyectos, y se adapta en sesiones posteriores. Capta frases como «me llamo…», «recuerda que…» o «prefiero…» y cada pocos turnos destila lo duradero. Es local (`~/.dsh/whale-maid-mascot/memory.json`), con tamaño acotado; desde clic derecho → **🧠 Memoria** puedes ver lo que recuerda o borrarlo. Los datos sensibles se excluyen a propósito.
 - **Menú contextual**: chat, trabajos, tarjeta de progreso, proactividad y dibujos automáticos, notificaciones, prompts frecuentes, archivar/nueva sesión, sesiones archivadas, explicar un término y arrastrar sesiones sobre la mascota para archivarlas o borrarlas (con doble confirmación).
 
 ## Instalación
 
-**Opción A (recomendada)** — instálalo desde el gestor de complementos de DSH con el paquete de npm **`dsh-whale-maid-mascot`** (o fija `dsh-whale-maid-mascot@2.0.0`). También puedes pegar el spec de GitHub:
+**Opción A (recomendada)** — instálalo desde el gestor de complementos de DSH con el paquete de npm **`dsh-whale-maid-mascot`** (o fija `dsh-whale-maid-mascot@2.1.0`). También puedes pegar el spec de GitHub:
 
 ```text
-github:dariodemh/dsh-whale-maid-mascot#v2.0.0
+github:dariodemh/dsh-whale-maid-mascot#v2.1.0
 ```
 
 Reinicia DSH por completo (cerrar la ventana puede no ser suficiente) y mira la esquina inferior derecha.
@@ -303,7 +315,7 @@ DSH Desktop 0.2.x (probado con `0.2.1-rc.5` en Windows 11) y Node.js 20+ solo pa
 
 ## Privacidad
 
-Sin telemetría ni peticiones de red propias: lo único que sale del equipo son las llamadas al servicio LLM de DSH cuando hablas con ella (mensaje, últimos 10 turnos, resumen compacto del workspace y, solo si los adjuntas, las imágenes que elijas). Las imágenes adjuntas pasan por el almacén de adjuntos de DSH (direccionado por contenido); las tarjetas generadas viven en memoria del host hasta dos horas y no se escriben en disco. Las preferencias se guardan en `localStorage` con el prefijo `dsh-whale-maid-mascot:`.
+Sin telemetría ni peticiones de red propias: lo único que sale del equipo son las llamadas al servicio LLM de DSH cuando hablas con ella (mensaje, últimos 10 turnos, resumen compacto del workspace y, solo si los adjuntas, las imágenes que elijas). Las imágenes adjuntas pasan por el almacén de adjuntos de DSH (direccionado por contenido); las tarjetas generadas viven en memoria del host hasta dos horas y no se escriben en disco. La **memoria a largo plazo** se guarda en `~/.dsh/whale-maid-mascot/memory.json` (configurable con `WHM_MEMORY_DIR`): solo contiene el nombre, preferencias y hechos que compartes o que se destilan de la conversación, nunca se sube a ninguna parte y puedes verla o borrarla desde **🧠 Memoria**. Las preferencias de UI se guardan en `localStorage` con el prefijo `dsh-whale-maid-mascot:`.
 
 ## Agradecimientos y licencia
 

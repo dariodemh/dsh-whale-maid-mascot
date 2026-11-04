@@ -6,6 +6,24 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.1.0 — 2026-11-03
+
+### Added
+
+- **Long-term memory** (`dsh/memory.js`): she remembers a preferred name, stable
+  preferences and durable facts about your projects, and uses them in later
+  sessions (chat, ambient lines and check-ins).
+  - Explicit cues such as «me llamo…», «recuerda que…» or «prefiero…» are stored
+    immediately; every few turns a bounded consolidation pass distils stable
+    facts from the recent conversation.
+  - Memory is local (`~/.dsh/whale-maid-mascot/memory.json`, override with
+    `WHM_MEMORY_DIR`), keyed by a random per-browser id, capped in size, and
+    written atomically. Sensitive categories are excluded from extraction.
+  - Right-click → **🧠 Memoria** shows what she remembers or clears it;
+    `GET/POST /whale-maid-mascot/memory` expose the same operations.
+- Host tests for memory storage/validation/prompting (now 23) and a browser test
+  for the memory menu (now 25).
+
 ## 2.0.2 — 2026-11-03
 
 ### Fixed
