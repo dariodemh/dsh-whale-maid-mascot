@@ -1495,6 +1495,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       function onWindowResize() {
         hideContextMenu()
         hideExplainFloat()
+        finishDrag(null, { cancel: true })
         repositionForViewport(lastViewport.w, lastViewport.h)
         if (root) {
           clampPos()
@@ -3791,22 +3792,45 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         e.preventDefault()
       }
 
-      function onPointerUp(e) {
+      function finishDrag(e, opts) {
         if (!drag.active) return
+        opts = opts || {}
         var wasMoved = drag.moved
         var tilt = dragTilt
         drag.active = false
-        root.classList.remove('dragging')
-        if (bodyWrap) bodyWrap.style.transform = ''
-        clampPos()
-        savePos()
-        if (wasMoved) {
+        dragTilt = 0
+        if (root) root.classList.remove('dragging')
+        if (bodyWrap) {
+          bodyWrap.classList.remove('wm-rebound')
+          bodyWrap.style.animation = ''
+          bodyWrap.style.transform = ''
+        }
+        if (root) {
+          clampPos()
+          savePos()
+        }
+        if (wasMoved && !opts.cancel) {
           playRebound(tilt)
           playDrop()
-        } else {
+        } else if (!wasMoved && !opts.cancel) {
           resetIdleTimer()
-          reactAt(e)
+          if (e) reactAt(e)
         }
+      }
+
+      function onPointerUp(e) {
+        finishDrag(e)
+      }
+
+      // Safety net: a pointer released outside the window (or a lost pointer
+      // capture) used to leave the body stuck at its drag angle. Finish the
+      // drag from the window/document too, and clear the tilt on blur.
+      function onWindowPointerUp(e) {
+        finishDrag(null, { cancel: true })
+      }
+
+      function onWindowBlur() {
+        finishDrag(null, { cancel: true })
       }
 
       function onHide(e) {
@@ -3874,6 +3898,9 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         document.removeEventListener('keydown', onKeyDown)
         document.removeEventListener('mouseup', onMouseUpForExplain)
         window.removeEventListener('resize', onWindowResize)
+        window.removeEventListener('pointerup', onWindowPointerUp)
+        window.removeEventListener('pointercancel', onWindowPointerUp)
+        window.removeEventListener('blur', onWindowBlur)
         document.removeEventListener('scroll', onScrollCapture, true)
         document.removeEventListener('pointermove', onWorksHeadMove)
         document.removeEventListener('pointerup', onWorksHeadUp)
@@ -4104,6 +4131,9 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           document.addEventListener('keydown', onKeyDown)
           document.addEventListener('mouseup', onMouseUpForExplain)
           window.addEventListener('resize', onWindowResize)
+          window.addEventListener('pointerup', onWindowPointerUp)
+          window.addEventListener('pointercancel', onWindowPointerUp)
+          window.addEventListener('blur', onWindowBlur)
           document.addEventListener('scroll', onScrollCapture, true)
           resetIdleTimer()
           startWorkspaceWatch()

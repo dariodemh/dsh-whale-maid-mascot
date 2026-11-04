@@ -283,6 +283,37 @@ test('the pet follows viewport resizes and stays inside the screen', async ({ pa
   expect(saved.vh).toBe(900)
 })
 
+test('the pet never stays tilted after a drag, even if the release is lost', async ({ page }) => {
+  await page.goto('/test/test.html')
+  await expect(page.locator('.wm-root')).toBeVisible()
+  const state = await page.evaluate(() => {
+    const root = document.querySelector('.wm-root')
+    const img = document.querySelector('.wm-img')
+    const rect = img.getBoundingClientRect()
+    const base = {
+      bubbles: true, cancelable: true, button: 0, pointerId: 7,
+      pointerType: 'mouse', isPrimary: true,
+    }
+    root.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: rect.left + 60, clientY: rect.top + 140 }))
+    root.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: rect.left + 140, clientY: rect.top + 150 }))
+    const tilted = document.querySelector('.wm-body').style.transform
+    // Simulate a release outside the pet/window: only the window fallback sees it.
+    window.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: rect.left + 150, clientY: rect.top + 160 }))
+    return {
+      tilted,
+      inlineTransform: document.querySelector('.wm-body').style.transform,
+      dragging: root.classList.contains('dragging'),
+    }
+  })
+  // The drag itself tilts the body, and the lost release must clear it again.
+  expect(state.tilted).toMatch(/rotate\(/)
+  expect(state.inlineTransform).toBe('')
+  expect(state.dragging).toBe(false)
+  await page.waitForTimeout(300)
+  const still = await page.evaluate(() => document.querySelector('.wm-body').style.transform)
+  expect(still).toBe('')
+})
+
 test('a failed reply falls back to a soft in-character line', async ({ page }) => {
   await page.route('**/whale-maid-mascot/chat', (route) => route.fulfill({
     status: 500,

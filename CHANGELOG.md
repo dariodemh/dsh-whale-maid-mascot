@@ -6,6 +6,15 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.0.2 — 2026-11-03
+
+### Fixed
+
+- The body no longer keeps the drag tilt when the pointer is released outside the
+  window (or pointer capture is lost): a window-level pointerup/cancel/blur
+  fallback finishes the drag and clears the rotation, and window resizes also
+  cancel an in-flight drag.
+
 ## 2.0.1 — 2026-11-03
 
 ### Fixed
