@@ -55,8 +55,6 @@ test('the public default carries no personal data nor a hardcoded name', () => {
   assert.doesNotMatch(text, /\bSos (?!\{\{name\}\})[^\s:]+:/)
   assert.match(text, /\{\{name\}\}/)
   assert.doesNotMatch(text, /\r/)
-  // Neutral: nothing that hints at the owner's character.
-
 })
 
 test('config.persona wins over everything, the ~/.dsh override over the package', () => {
