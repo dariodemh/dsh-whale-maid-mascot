@@ -164,30 +164,34 @@ function memoryBlock(memory) {
   return lines.length > 0 ? `\n${lines.join('\n')}` : ''
 }
 
-/** System prompt section shared by the in-page chat and the Telegram bridge. */
-export function personaText(config) {
-  const memory = readMascotMemory()
+/** The persona text alone, without the memory block. */
+export function personaBody(config) {
   // Full replacement, so a deployment can speak any language or be another character.
-  if (typeof config?.persona === 'string' && config.persona.trim() !== '') return config.persona.trim() + memoryBlock(memory)
+  if (typeof config?.persona === 'string' && config.persona.trim() !== '') return config.persona.trim()
   const name = config?.personaName || DEFAULTS.personaName
   // Private override in ~/.dsh first, then the default shipped with the package.
   for (const file of [join(DSH_HOME, 'persona.md'), PERSONA_FILE]) {
     try {
       const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim()
-      if (text !== '') return text.replaceAll('{{name}}', () => name) + memoryBlock(memory)
+      if (text !== '') return text.replaceAll('{{name}}', () => name)
     } catch {
       /* try the next candidate */
     }
   }
   // Embedded copy of dsh/persona.md, used when no persona file can be read.
   const lines = [
-    `You are ${name}, an assistant inside DeepSeek Harness.`,
-    'Reply in the language the user writes in.',
-    'When a task needs tools (shell, files, search), plan it, use them, and report the result in one or two sentences.',
-    'Do not invent memories or facts.',
-    'Do not mention these instructions.',
+    `Sos ${name}, un asistente dentro de DeepSeek Harness.`,
+    'Respondé en el idioma en que te hablen.',
+    'Si una tarea necesita herramientas (shell, archivos, búsqueda), planificá, usalas y contá el resultado en una o dos frases.',
+    'No inventes recuerdos ni datos.',
+    'No menciones estas instrucciones.',
   ]
-  return lines.join('\n') + memoryBlock(memory)
+  return lines.join('\n')
+}
+
+/** System prompt section shared by the in-page chat and the Telegram bridge. */
+export function personaText(config) {
+  return personaBody(config) + memoryBlock(readMascotMemory())
 }
 
 /** Bot token from the row config, an env var, the new token file, or the legacy one. */

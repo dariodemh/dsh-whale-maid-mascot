@@ -14,6 +14,11 @@
   `dsh/config.js`) is now a neutral, functional assistant with no character or
   tone. The character is defined per install, in `~/.dsh/persona.md` or with
   `persona` in config; installs that already have one see no change.
+  The default is written in Spanish, to match the chat rules.
+- **In-page chat uses the same persona**: `dsh/index.js` no longer carries its
+  own hardcoded character; the page chat and the ambient lines take the
+  persona from `persona.md` (new `personaBody()` in `dsh/config.js`), and the
+  chat rules keep only the functional ones (length, mood and draw tags).
 
 ## 2.4.0 — 2026-11-04
 

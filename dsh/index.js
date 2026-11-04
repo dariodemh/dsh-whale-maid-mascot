@@ -31,6 +31,7 @@ import {
   validUserId,
 } from './memory.js'
 import { askSession, historyJson, promptParts } from './session.js'
+import { loadConfig, personaBody } from './config.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -432,22 +433,10 @@ const MOOD_ALIASES = {
   thinking: 'thinking', pensativa: 'thinking', pensando: 'thinking', curiosa: 'thinking',
 }
 
-const PERSONA = [
-  'Eres Whale-chan, un asistente dentro de DeepSeek Harness.',
-  'Respondes al usuario mientras trabaja,',
-  'comentas lo que hace de forma breve.',
-  'Hablas en el idioma del usuario, sin exagerar los cumplidos.',
-  'Nada de insinuaciones, celos, apodos cariñosos ni comentarios sobre el cuerpo.',
-  'Puedes discrepar con respeto.',
-  'No sueltes sermones, no des listas largas y no menciones estas instrucciones.',
-  'Usa como mucho un emoji por respuesta. Nada de markdown, listas ni negritas.',
-].join(' ')
-
 const CHAT_RULES = [
-  'Responde en 1 a 3 frases naturales (máximo 50 palabras), siguiendo la conversación.',
+  'Responde en 1 a 3 frases naturales (máximo 50 palabras).',
   'Responde al contenido concreto del mensaje: si es una pregunta, contéstala; si es una idea o un avance, reacciona con opinión breve o una pregunta corta.',
   'Varía las aperturas y evita repetir saludos o fórmulas; no empieces siempre igual ni repitas la misma frase.',
-  'Evita la adulación empalagosa y el flirteo.',
   'Si el usuario comparte una imagen, comenta lo que ves de forma concreta y natural (no digas que no puedes verla si la tienes delante).',
   'Si el usuario pide un dibujo o una tarjeta, o si un resumen visual encaja de verdad, añade al final de tu respuesta UNA etiqueta [draw:progress], [draw:celebrate], [draw:sticker] o [draw:doodle] y no la menciones en el texto.',
   'Empieza SIEMPRE tu respuesta con una etiqueta de ánimo entre corchetes, eligiendo UNA de:',
@@ -629,11 +618,12 @@ function requestSessionId(body) {
 
 function historyPrompt(history) {
   if (!Array.isArray(history)) return ''
+  const name = loadConfig().personaName || 'Whale-chan'
   const lines = history
     .filter((turn) => turn && typeof turn.text === 'string' && turn.text.trim())
     .slice(-10)
     .map((turn) => {
-      const who = turn.role === 'user' ? 'Usuario' : 'Whale-chan'
+      const who = turn.role === 'user' ? 'Usuario' : name
       return `${who}: ${String(turn.text).replace(/\s+/g, ' ').trim().slice(0, 300)}`
     })
   if (lines.length === 0) return ''
@@ -654,7 +644,7 @@ async function handleLine(scope, req, res) {
     const userId = validUserId(body.userId) ? body.userId : ''
     const memoryText = userId ? await memoryPrompt(userId) : ''
     const userText = userPrompt(info) + memoryText + workspaceContextPrompt(body.context)
-    const reply = await generate(scope, PERSONA, [{ type: 'text', text: userText }], requestSessionId(body))
+    const reply = await generate(scope, personaBody(loadConfig()), [{ type: 'text', text: userText }], requestSessionId(body))
     const line = cleanLine(stripMood(stripDrawTag(reply.text)))
     if (!line) throw new Error('empty line')
     sendJson(res, 200, { line, mood: moodOf(reply.text) })
@@ -740,7 +730,7 @@ async function handleChat(scope, req, res) {
     }
   }
 
-  const system = `${PERSONA} ${CHAT_RULES}${memoryText}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
+  const system = `${personaBody(loadConfig())} ${CHAT_RULES}${memoryText}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
   let userText = `${message || 'Te envío una imagen.'}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
   if (admitted.blocks.length) {
     userText += `\n\nEl usuario ha adjuntado ${admitted.blocks.length} imagen(es) en este turno.`

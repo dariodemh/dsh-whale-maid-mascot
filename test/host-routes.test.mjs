@@ -10,12 +10,13 @@ import { Readable } from 'node:stream'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { apply } from '../dsh/index.js'
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = join(TEST_DIR, '..', 'tmp-workspace-fixture')
-// Keep long-term memory writes inside the fixture instead of the real home.
+// Keep long-term memory writes and the persona/config home inside the fixture instead of the real home.
 process.env.WHM_MEMORY_DIR = join(FIXTURE, 'memory')
+process.env.DSH_HOME = join(FIXTURE, 'dsh-home')
+const { apply } = await import('../dsh/index.js')
 
 // Workspace fixture used by the scanning/preview tests.
 const PNG_1PX = Buffer.from(
@@ -303,15 +304,14 @@ test('body-tap lines also receive the work context', async () => {
 
 // --- companion tone + image chat + drawings -----------------------------------
 
-test('the companion prompt stays friendly and free of flirting', async () => {
+test('the chat prompt takes the persona from persona.md, not a hardcoded character', async () => {
   const { routes, scope } = harness(chunks('[neutral] Hola.'))
   await post(routes.get('/whale-maid-mascot/chat'), { message: 'hola' })
   const system = String(scope.lastStreamOptions.system)
-
+  assert.match(system, /^Sos Whale-chan, un asistente dentro de DeepSeek Harness\./)
   assert.match(system, /confianza/i)
-
-  assert.doesNotMatch(system, /mi amo/i)
-
+  assert.match(system, /Empieza SIEMPRE tu respuesta con una etiqueta de ánimo/)
+  assert.ok(system.includes('un asistente dentro de DeepSeek Harness'))
 })
 
 test('draw route renders an SVG card and serves it back by id', async () => {

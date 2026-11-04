@@ -139,6 +139,8 @@ character:
 Precedence: `persona` in config > `~/.dsh/persona.md` > packaged
 `dsh/persona.md` > embedded copy of it.
 
+The in-page chat and the shared session (Telegram/DSH) read the same persona.
+
 Memory is not part of the text: it lives in
 `~/.dsh/whale-maid-mascot/memory.json` and is appended to the end of the prompt
 in every case.
