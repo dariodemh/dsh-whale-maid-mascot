@@ -1,5 +1,19 @@
-# dsh bundle layer: mount the whale-maid mascot host plugin
-# (dsh/index.js serves the character PNGs to the browser client).
+# dsh bundle layer: the in-page mascot plus her Telegram bridge.
+#
+# Both rows belong to the same package. The Telegram row is inert until a bot
+# token is configured (`~/.dsh/whale-maid.token`, the TELEGRAM_BOT_TOKEN env var,
+# or `token` in the row config), so a plain install keeps just the mascot.
+#
+# Optional configuration (profile cordis.patch.yml, by row id):
+#
+#   - id: whale-maid-telegram
+#     config:
+#       cwd: C:/Users/you/projects/my-repo
+#       personaName: Whale-chan
+#       permissionPreset: workspace-write   # default: danger-full-access
+#       allowedUserIds: [123456789]
 - insert:
     - id: whale-maid-mascot
-      name: 'dsh-whale-maid-mascot'
+      name: dsh-whale-maid-mascot
+    - id: whale-maid-telegram
+      name: dsh-whale-maid-mascot/telegram

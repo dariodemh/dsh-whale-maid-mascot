@@ -30,6 +30,7 @@ import {
   memoryPrompt,
   validUserId,
 } from './memory.js'
+import { askSession, historyJson, promptParts } from './session.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -676,22 +677,26 @@ async function handleChat(scope, req, res) {
   }
 
   let admitted = { blocks: [], refs: [], noVision: false, unavailable: false }
+  const sessionBridge = Boolean(agentHostScope && typeof agentHostScope.sessionController === 'object')
   try {
     admitted = await admitChatImages(scope, rawImages)
   } catch (error) {
-    const known = scope.attachments &&
-      typeof scope.attachments.isAttachmentError === 'function' &&
-      scope.attachments.isAttachmentError(error)
-    sendJson(res, known ? 400 : 500, {
-      error: known ? String(error.code || 'image-invalid') : 'image-processing-failed',
-    })
-    return
+    if (!sessionBridge) {
+      const known = scope.attachments &&
+        typeof scope.attachments.isAttachmentError === 'function' &&
+        scope.attachments.isAttachmentError(error)
+      sendJson(res, known ? 400 : 500, {
+        error: known ? String(error.code || 'image-invalid') : 'image-processing-failed',
+      })
+      return
+    }
+    console.warn('[whale-maid-mascot] image admission failed for the shared session:', error && error.message)
   }
-  if (admitted.noVision) {
+  if (admitted.noVision && !sessionBridge) {
     sendJson(res, 415, { error: 'El modelo actual no admite imágenes', code: 'MODEL_NO_VISION' })
     return
   }
-  if (rawImages.length && admitted.unavailable) {
+  if (rawImages.length && admitted.unavailable && !sessionBridge) {
     sendJson(res, 503, { error: 'attachment service unavailable', code: 'NO_ATTACHMENTS' })
     return
   }
@@ -708,6 +713,33 @@ async function handleChat(scope, req, res) {
     }
   }
   const memoryText = userId ? await memoryPrompt(userId) : ''
+
+  // The shared mascot session: the in-page chat runs in the same DSH session as Telegram,
+  // so it has real tools and the same conversation. Falls back to the plain LLM
+  // call if the session controller is unavailable or the turn fails.
+  if (agentHostScope && typeof agentHostScope.sessionController === 'object') {
+    try {
+      const result = await askSession(agentHostScope, promptParts(message, rawImages))
+      const agentReply = typeof result?.text === 'string' ? result.text : ''
+      if (agentReply !== '') {
+        const imageUrls = admitted.refs.map(cacheImageRef).filter(Boolean)
+        const payload = { line: agentReply, mood: moodOf(agentReply) }
+        if (imageUrls.length) payload.images = imageUrls
+        sendJson(res, 200, payload)
+        if (userId) {
+          bumpTurns(userId).then((user) => {
+            if (user && user.turns > 0 && user.turns % MEMORY_TURN_CONSOLIDATION === 0) {
+              consolidateMemory(scope, userId, body.history).catch(() => {})
+            }
+          }).catch(() => {})
+        }
+        return
+      }
+    } catch (error) {
+      console.warn('[whale-maid-mascot] session chat failed, falling back to LLM:', error && error.message)
+    }
+  }
+
   const system = `${PERSONA} ${CHAT_RULES}${memoryText}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
   let userText = `${message || 'Te envío una imagen.'}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
   if (admitted.blocks.length) {
@@ -1072,8 +1104,32 @@ function registerImageHandler(scope, route, path) {
   })
 }
 
+// --- shared session ----------------------------------------------------------
+// The in-page chat runs in the same DSH agent session as the Telegram bridge:
+// same conversation, same tools, same memory. When the session controller is not
+// mounted (or the turn fails) the chat falls back to a plain LLM call.
+let agentHostScope = null
+
+async function handleSharedHistory(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  try {
+    sendJson(res, 200, await historyJson(agentHostScope))
+  } catch (error) {
+    sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
+  }
+}
 export function apply(ctx, config = {}) {
   if (typeof ctx.inject !== 'function') return
+
+  // Keep the shared agent session reachable from the chat route: the in-page
+  // chat then runs with the mascot's tools instead of a plain LLM call.
+  ctx.inject(['sessionController'], (scope) => {
+    agentHostScope = scope
+  })
+
   ctx.inject(['webServer'], (scope) => {
     try {
       for (const asset of ASSETS) registerImageHandler(scope, asset.route, fileURLToPath(asset.file))
@@ -1119,6 +1175,12 @@ export function apply(ctx, config = {}) {
         kind: 'exact',
         path: MEMORY_ROUTE,
         handler: (req, res) => handleMemory(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-history',
+        kind: 'exact',
+        path: '/whale-maid-mascot/history',
+        handler: (req, res) => handleSharedHistory(req, res),
       })
     } catch (error) {
       console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)

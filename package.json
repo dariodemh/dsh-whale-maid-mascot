@@ -1,7 +1,7 @@
 {
   "name": "dsh-whale-maid-mascot",
-  "version": "2.1.0",
-  "description": "Whale-chan (DeepSeek 娘) in-page companion for the DeepSeek Harness web UI: neutral chat with images and long-term memory, generated cards, workspace panel and proactive check-ins.",
+  "version": "2.2.0",
+  "description": "Whale-chan: an in-page companion for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat in the browser or from your phone, with real tools.",
   "author": {
     "name": "dariodemh",
     "url": "https://github.com/dariodemh"
@@ -35,7 +35,11 @@
     "dsh-plugin",
     "mascot",
     "whale",
-    "waifu"
+    "waifu",
+    "telegram",
+    "bot",
+    "assistant",
+    "agent"
   ],
   "scripts": {
     "test": "playwright test",
@@ -45,8 +49,9 @@
   "exports": {
     ".": "./dsh/index.js",
     "./dsh": "./dsh/index.js",
-    "./package.json": "./package.json",
-    "./client": "./dsh/client.js"
+    "./telegram": "./dsh/telegram.js",
+    "./client": "./dsh/client.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "dsh",

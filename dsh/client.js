@@ -431,7 +431,12 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           '.wm-chat-chip img{width:100%;height:100%;object-fit:cover;display:block;border-radius:8px;}' +
           '.wm-chat-chip-x{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;' +
           'border:none;background:#1e293b;color:#fff;font-size:10px;line-height:18px;cursor:pointer;padding:0;}' +
-          '.wm-chat-img{display:block;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px;}' +
+          '.wm-chat-img{display:block;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px;cursor:zoom-in;}' +
+          '.wm-lightbox{position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,.86);display:flex;' +
+          'align-items:center;justify-content:center;cursor:zoom-out;padding:16px;}' +
+          '.wm-lightbox img{max-width:94vw;max-height:92vh;border-radius:10px;box-shadow:0 24px 60px rgba(0,0,0,.5);display:block;}' +
+          '.wm-lightbox-close{position:absolute;top:14px;right:18px;background:none;border:none;color:#fff;font-size:26px;' +
+          'line-height:1;cursor:pointer;padding:4px 8px;}' +
           '.wm-chat.wm-drop{outline:2px dashed #93c5fd;outline-offset:4px;}' +
           '.wm-works{position:fixed;left:0;top:0;z-index:2147483062;width:380px;max-width:calc(100vw - 24px);' +
           'max-height:min(68vh,560px);background:#fff;color:#1e293b;border:1px solid #cbd5e1;border-radius:16px;' +
@@ -2112,10 +2117,58 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           im.className = 'wm-chat-img'
           im.src = url
           im.alt = 'imagen'
+          im.title = 'Clic para ampliar'
           im.loading = 'lazy'
+          im.addEventListener('click', function () { openChatImage(url) })
           el.appendChild(im)
         })
         return el
+      }
+
+      function openChatImage(url) {
+        if (!url) return
+        var box = document.createElement('div')
+        box.className = 'wm-lightbox'
+        var pic = document.createElement('img')
+        pic.src = url
+        pic.alt = 'imagen ampliada'
+        var close = document.createElement('button')
+        close.className = 'wm-lightbox-close'
+        close.type = 'button'
+        close.textContent = '\u00d7'
+        var closeBox = function () {
+          box.remove()
+          document.removeEventListener('keydown', onKey, true)
+        }
+        var onKey = function (e) {
+          if (e.key === 'Escape') closeBox()
+        }
+        close.addEventListener('click', function (e) {
+          e.stopPropagation()
+          closeBox()
+        })
+        box.appendChild(pic)
+        box.appendChild(close)
+        box.addEventListener('click', closeBox)
+        document.addEventListener('keydown', onKey, true)
+        document.body.appendChild(box)
+      }
+
+      // The shared session is the same one the mascot uses on Telegram: reload the
+      // visible transcript from it so both surfaces show one conversation.
+      function loadSharedHistory() {
+        fetch('/whale-maid-mascot/history')
+          .then(function (res) { return res.ok ? res.json() : null })
+          .then(function (data) {
+            if (!data || !Array.isArray(data.messages) || data.messages.length === 0) return
+            if (chatPending) return
+            chatHistory = data.messages.map(function (m) {
+              return { role: m.role === 'user' ? 'user' : 'bot', text: String(m.text || '') }
+            })
+            saveChatHistory()
+            renderChatMessages()
+          })
+          .catch(function () {})
       }
 
       function renderChatMessages() {
@@ -2233,6 +2286,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatPanelEl.classList.add('open')
         chatOpenedOnce = true
         renderChatMessages()
+        if (!chatPending) loadSharedHistory()
         if (chatHistory.length === 0) say('Aquí estoy. ¿De qué hablamos?', 4500)
         try {
           chatInputEl.focus()
@@ -2512,7 +2566,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         var ctrl = typeof AbortController === 'function' ? new AbortController() : null
         var timer = ctrl ? setTimeout(function () {
           try { ctrl.abort() } catch (e) {}
-        }, 60000) : null
+        }, 300000) : null
         chatAbortCtrl = { ctrl: ctrl, timer: timer }
         var init = {
           method: 'POST',

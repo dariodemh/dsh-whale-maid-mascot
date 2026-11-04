@@ -6,6 +6,35 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.2.0 — 2026-11-03
+
+### Added
+
+- **Whale-chan on Telegram**: a second bundle layer (`dsh/telegram.js`,
+  exported as `dsh-whale-maid-mascot/telegram`) that long-polls the Telegram Bot
+  API and answers from the shared DSH agent session. Text and photos, live
+  streamed replies (one edited message), `/new`, `/status`, `/memory`, `/models`,
+  `/model`, `/stop`, and one-time pairing with a local code.
+- **One shared session** for both surfaces (`dsh/session.js`): same history,
+  same tools, same persona, same memory. The in-page chat now runs real agent
+  turns with tools, and reloads the shared transcript when the panel opens.
+- **Shared configuration and state** (`dsh/config.js`): `~/.dsh/whale-maid.json`,
+  `~/.dsh/whale-maid.state.json`, `~/.dsh/whale-maid.token`. Previous
+  `telegram-hermes.*` files are still read for compatibility.
+- **Global tools**: `telegram_send` (proactive messages) and `whale_remember`
+  (writes into the mascot's long-term memory).
+
+### Changed
+
+- The chat panel timeout went from 60 s to 5 min, for agent turns that use tools.
+- Telegram images now reach the model as native attachments; the mascot's chat
+  images bypass the old vision gate when the shared session is available.
+
+### Fixed
+
+- Chat images can be enlarged: click opens a full-screen lightbox (`Esc` or a
+  click closes it).
+
 ## 2.1.0 — 2026-11-03
 
 ### Added
