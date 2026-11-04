@@ -311,7 +311,6 @@ test('the chat prompt takes the persona from persona.md, not a hardcoded charact
   assert.match(system, /^Sos Whale-chan, un asistente dentro de DeepSeek Harness\./)
   assert.match(system, /confianza/i)
   assert.match(system, /Empieza SIEMPRE tu respuesta con una etiqueta de ánimo/)
-  assert.ok(system.includes('un asistente dentro de DeepSeek Harness'))
 })
 
 test('draw route renders an SVG card and serves it back by id', async () => {
