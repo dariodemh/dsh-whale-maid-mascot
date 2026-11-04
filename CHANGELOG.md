@@ -6,6 +6,17 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.0.1 — 2026-11-03
+
+### Fixed
+
+- **Responsive positioning**: the pet now keeps the same relative spot when the
+  window changes size, is clamped back on screen on shrink, and the open chat /
+  works panels follow the resize too. Saved positions remember the viewport they
+  were authored at, so restoring on a different monitor size lands sensibly.
+- The sprite scales down on short viewports (≤700 px and ≤560 px tall) and up on
+  tall screens (≥1000 px) instead of staying at a fixed pixel size.
+
 ## 2.0.0 — 2026-11-03
 
 Companion release: Whale-chan is now a **neutral, friendly companion** instead of a

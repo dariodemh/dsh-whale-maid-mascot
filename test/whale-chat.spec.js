@@ -253,6 +253,36 @@ test('the companion menu exposes proactive and auto-draw settings', async ({ pag
   await expect(page.locator('.wm-menu-item', { hasText: 'Dibujos automáticos' })).toBeVisible()
 })
 
+test('the pet follows viewport resizes and stays inside the screen', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.goto('/test/test.html')
+  await expect(page.locator('.wm-root')).toBeVisible()
+  const before = await page.locator('.wm-root').boundingBox()
+
+  // Shrink: the pet should move to keep the same relative spot...
+  await page.setViewportSize({ width: 640, height: 480 })
+  await page.waitForTimeout(350)
+  const small = await page.locator('.wm-root').boundingBox()
+  expect(small.x).toBeLessThan(before.x)
+  expect(small.y).toBeLessThan(before.y)
+  // ...and stay reachable (at least a good part of it on screen).
+  expect(small.x + small.width).toBeGreaterThan(320)
+  expect(small.y).toBeLessThan(480)
+
+  // Grow again: it must not be left off screen.
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.waitForTimeout(350)
+  const grown = await page.locator('.wm-root').boundingBox()
+  expect(grown.x).toBeGreaterThanOrEqual(0)
+  expect(grown.y).toBeGreaterThanOrEqual(0)
+  expect(grown.x + grown.width).toBeLessThanOrEqual(1400 + 45)
+
+  // The saved position also carries the viewport it was authored at.
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-whale-maid-mascot:pos')))
+  expect(saved.vw).toBe(1400)
+  expect(saved.vh).toBe(900)
+})
+
 test('a failed reply falls back to a soft in-character line', async ({ page }) => {
   await page.route('**/whale-maid-mascot/chat', (route) => route.fulfill({
     status: 500,

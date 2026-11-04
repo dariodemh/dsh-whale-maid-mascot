@@ -201,6 +201,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var lastProactiveAt = 0
       var proactiveTimer = null
       var drawSeq = 0
+      var lastViewport = { w: 0, h: 0 }
       var chatDrag = { active: false, offX: 0, offY: 0, moved: false }
       var bubbleLockUntil = 0
       var zoneSeq = 0
@@ -467,7 +468,10 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           'white-space:pre-wrap;word-break:break-word;}' +
           '.wm-works-preview iframe{width:100%;height:250px;border:none;border-radius:6px;background:#fff;}' +
           '.wm-works-preview .meta{color:#64748b;font-size:12px;padding:4px 2px;}' +
-          '.wm-works-empty{color:#94a3b8;text-align:center;padding:24px 0;font-size:12px;}'
+          '.wm-works-empty{color:#94a3b8;text-align:center;padding:24px 0;font-size:12px;}' +
+          '@media (max-height:700px){.wm-img{height:186px;}.wm-root{width:124px;height:198px;}}' +
+          '@media (max-height:560px){.wm-img{height:150px;}.wm-root{width:100px;height:162px;}}' +
+          '@media (min-height:1000px){.wm-img{height:256px;}.wm-root{width:166px;height:270px;}}'
         document.head.appendChild(styleEl)
       }
 
@@ -555,7 +559,12 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         try {
           storeSet(
             LS_POS,
-            JSON.stringify({ left: parseInt(root.style.left, 10), top: parseInt(root.style.top, 10) }),
+            JSON.stringify({
+              left: parseInt(root.style.left, 10),
+              top: parseInt(root.style.top, 10),
+              vw: window.innerWidth,
+              vh: window.innerHeight,
+            }),
           )
         } catch (e) {}
       }
@@ -1486,8 +1495,45 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       function onWindowResize() {
         hideContextMenu()
         hideExplainFloat()
+        repositionForViewport(lastViewport.w, lastViewport.h)
+        if (root) {
+          clampPos()
+          savePos()
+        }
+        lastViewport = { w: window.innerWidth, h: window.innerHeight }
         if (chatPanelEl && chatPanelEl.classList.contains('open')) clampChatPanel()
         if (worksPanelEl && worksPanelEl.classList.contains('open')) clampWorksPanel()
+      }
+
+      // Keep the pet (and the open panels) anchored to the same relative spot
+      // when the window changes size, then clamp everything back on screen.
+      function repositionForViewport(prevW, prevH) {
+        var nextW = window.innerWidth
+        var nextH = window.innerHeight
+        if (!prevW || !prevH || !nextW || !nextH) return
+        var sx = nextW / prevW
+        var sy = nextH / prevH
+        if (root) {
+          var left = parseInt(root.style.left, 10)
+          var top = parseInt(root.style.top, 10)
+          if (!isNaN(left) && !isNaN(top) && (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01)) {
+            root.style.left = Math.round(left * sx) + 'px'
+            root.style.top = Math.round(top * sy) + 'px'
+            clampPos()
+            savePos()
+          }
+        }
+        ;[[chatPanelEl, saveChatPos, clampChatPanel], [worksPanelEl, saveWorksPos, clampWorksPanel]].forEach(function (entry) {
+          var panel = entry[0]
+          if (!panel || !panel.classList.contains('open')) return
+          var panelLeft = parseInt(panel.style.left, 10)
+          var panelTop = parseInt(panel.style.top, 10)
+          if (isNaN(panelLeft) || isNaN(panelTop)) return
+          panel.style.left = Math.round(panelLeft * sx) + 'px'
+          panel.style.top = Math.round(panelTop * sy) + 'px'
+          entry[1]()
+          entry[2]()
+        })
       }
 
       function onScrollCapture() {
@@ -3573,13 +3619,23 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       function placeInitial() {
         var saved = readPos()
         if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
-          root.style.left = saved.left + 'px'
-          root.style.top = saved.top + 'px'
+          var left = saved.left
+          var top = saved.top
+          // Restore a relative spot when the window has changed size since the
+          // position was saved (different monitor, smaller window...).
+          if (saved.vw > 0 && saved.vh > 0 && window.innerWidth > 0 && window.innerHeight > 0) {
+            left = left * window.innerWidth / saved.vw
+            top = top * window.innerHeight / saved.vh
+          }
+          root.style.left = Math.round(left) + 'px'
+          root.style.top = Math.round(top) + 'px'
         } else {
           root.style.left = Math.max(8, window.innerWidth - 150 - 14) + 'px'
           root.style.top = Math.max(8, window.innerHeight - 244 - 128) + 'px'
         }
         clampPos()
+        savePos()
+        lastViewport = { w: window.innerWidth, h: window.innerHeight }
       }
 
       function say(text, holdMs) {

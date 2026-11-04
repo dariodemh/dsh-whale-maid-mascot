@@ -31,6 +31,7 @@ The upstream plugin provides the base in-page pet (dragging, tap reactions, spee
 - Taps get a short friendly reaction; rapid clicking gets a mild complaint instead of an angry scene.
 - Four non-chibi outfits cycle from the top-left button (**A** maid, **D** school uniform, **E** hoodie, **F** dark); drag with tilt + inertia, collapse with ✕, restore with 🐋.
 - A quiet confidence counter (0/10/30/60/100) makes her bubble lines a little warmer over time — it never turns into flirting.
+- **Responsive**: she keeps her relative spot when the window changes size, stays on screen when it shrinks, and scales up/down on small or tall viewports.
 - Mood poses (front / side / back) swap with her mood.
 
 **💬 Chat with Whale-chan**
@@ -264,6 +265,7 @@ Proyecto fan **no oficial** y derivado del plugin original de **yefeng7531** (MI
 ## Funciones
 
 - **Compañera, no waifu**: tono neutro y amistoso; sin frases románticas, sin "amo" ni bromas sobre el cuerpo. La confianza (0/10/30/60/100) solo hace que sus frases sean un poco más cercanas.
+- **Responsive**: mantiene su posición relativa al cambiar el tamaño de la ventana, no se sale de la pantalla y se ajusta en pantallas pequeñas o grandes.
 - **Cuatro estilos** (A sirvienta, D uniforme, E sudadera, F oscura) y poses por emoción (delante / lateral / espalda), con arrastre, recogida y restauración.
 - **💬 Chat**: panel arrastrable, español natural, recuerda los últimos 10 mensajes y usa tu proveedor configurado en DSH (la clave nunca llega al navegador). Si la IA falla, contesta con frases fijas: nunca se queda muda.
 - **Imágenes en ambos sentidos**: adjunta con 📎, pega con `Ctrl+V` o arrastra al panel (hasta 3 imágenes, 6 MB cada una) y ella comenta lo que ve si tu modelo tiene visión. También te puede mandar imágenes de tus entregables y tarjetas generadas.
