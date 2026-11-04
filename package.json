@@ -1,84 +1,86 @@
-{
-  "name": "dsh-whale-maid-mascot",
-  "version": "2.5.0",
-  "description": "Whale-chan: an in-page companion for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat in the browser or from your phone, with real tools.",
-  "author": {
-    "name": "dariodemh",
-    "url": "https://github.com/dariodemh"
-  },
-  "contributors": [
-    {
-      "name": "yefeng7531",
-      "url": "https://github.com/yefeng7531"
-    },
-    {
-      "name": "Amakurai",
-      "url": "https://github.com/Amakurai"
-    }
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/dariodemh/dsh-whale-maid-mascot.git"
-  },
-  "homepage": "https://github.com/dariodemh/dsh-whale-maid-mascot",
-  "bugs": {
-    "url": "https://github.com/dariodemh/dsh-whale-maid-mascot/issues"
-  },
-  "type": "module",
-  "main": "./dsh/index.js",
-  "engines": {
-    "node": ">=20"
-  },
-  "keywords": [
-    "deepseek-harness",
-    "dsh",
-    "dsh-plugin",
-    "mascot",
-    "whale",
-    "waifu",
-    "telegram",
-    "bot",
-    "assistant",
-    "agent"
-  ],
-  "scripts": {
-    "test": "playwright test",
-    "test:host": "node test/host-routes.test.mjs",
-    "test:chat": "playwright test test/whale-chat.spec.js"
-  },
-  "exports": {
-    ".": "./dsh/index.js",
-    "./dsh": "./dsh/index.js",
-    "./telegram": "./dsh/telegram.js",
-    "./client": "./dsh/client.js",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dsh",
-    "assets",
-    "tools",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE",
-    "NOTICE",
-    "ASSETS-LICENSE.md",
-    "CHANGELOG.md"
-  ],
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [],
-      "platform": "web",
-      "immediately": true
-    }
-  },
-  "license": "SEE LICENSE IN LICENSE",
-  "publishConfig": {
-    "access": "public"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.64.1"
-  }
+﻿{
+    "name":  "dsh-whale-maid-mascot",
+    "version":  "2.6.0",
+    "description":  "Whale-chan: an in-page companion for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat in the browser or from your phone, with real tools.",
+    "author":  {
+                   "name":  "dariodemh",
+                   "url":  "https://github.com/dariodemh"
+               },
+    "contributors":  [
+                         {
+                             "name":  "yefeng7531",
+                             "url":  "https://github.com/yefeng7531"
+                         },
+                         {
+                             "name":  "Amakurai",
+                             "url":  "https://github.com/Amakurai"
+                         }
+                     ],
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/dariodemh/dsh-whale-maid-mascot.git"
+                   },
+    "homepage":  "https://github.com/dariodemh/dsh-whale-maid-mascot",
+    "bugs":  {
+                 "url":  "https://github.com/dariodemh/dsh-whale-maid-mascot/issues"
+             },
+    "type":  "module",
+    "main":  "./dsh/index.js",
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "keywords":  [
+                     "deepseek-harness",
+                     "dsh",
+                     "dsh-plugin",
+                     "mascot",
+                     "whale",
+                     "waifu",
+                     "telegram",
+                     "bot",
+                     "assistant",
+                     "agent"
+                 ],
+    "scripts":  {
+                    "test":  "playwright test",
+                    "test:host":  "node test/host-routes.test.mjs",
+                    "test:chat":  "playwright test test/whale-chat.spec.js"
+                },
+    "exports":  {
+                    ".":  "./dsh/index.js",
+                    "./dsh":  "./dsh/index.js",
+                    "./telegram":  "./dsh/telegram.js",
+                    "./client":  "./dsh/client.js",
+                    "./package.json":  "./package.json"
+                },
+    "files":  [
+                  "dsh",
+                  "assets",
+                  "tools",
+                  "cordis.patch.yml",
+                  "README.md",
+                  "LICENSE",
+                  "NOTICE",
+                  "ASSETS-LICENSE.md",
+                  "CHANGELOG.md"
+              ],
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           },
+                "client":  {
+                               "inject":  [
+
+                                          ],
+                               "platform":  "web",
+                               "immediately":  true
+                           }
+            },
+    "license":  "SEE LICENSE IN LICENSE",
+    "publishConfig":  {
+                          "access":  "public"
+                      },
+    "devDependencies":  {
+                            "@playwright/test":  "^1.64.1"
+                        }
 }

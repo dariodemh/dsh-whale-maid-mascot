@@ -6,7 +6,30 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
-## 2.5.0 — 2026-11-04
+## 2.6.0 — 2026-11-04
+
+### Added
+
+- **The character's own memory** (`selfFacts`, `journal`): deliberate decisions
+  and evolution notes about the character herself now live in their own
+  sections, separate from the user's facts and preferences. New memory kinds
+  accepted everywhere (`whale_remember`, the memory routes and consolidation):
+  - `self`: a first-person decision with its reason (what changed, what was
+    rejected and why). Deduplicated like facts.
+  - `journal`: a dated self-review entry; kept as a bounded rolling list
+    (last 12) and shown as entries, not deduplicated.
+- Memory prompt and persona blocks separate the two histories: the user
+  section ("Memoria persistente del usuario") and the character's own section
+  ("Cosas propias de ti") never mix any more.
+- `/memory` on Telegram (and the in-page memory panel) also show the self and
+  journal sections.
+- Memory consolidation can now extract `"propio: …"` lines when the assistant
+  herself states a decision about her own persona.
+
+### Changed
+
+- `whale_remember` gained the `self` and `journal` kinds (the enum keeps
+  `name`, `fact`, `preference`; unknown kinds still fall back to `fact`).
 
 ### Added
 

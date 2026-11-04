@@ -1953,11 +1953,22 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         openChat()
         fetchMemory().then(function (data) {
           memoryCache = data && data.memory ? data.memory : null
-          var memory = memoryCache || { name: '', facts: [], preferences: [] }
+          var memory = memoryCache || { name: '', facts: [], preferences: [], selfFacts: [], journal: [] }
           var lines = []
           if (memory.name) lines.push('Nombre o trato: ' + memory.name)
           ;(memory.facts || []).forEach(function (fact) { lines.push('· ' + fact) })
           ;(memory.preferences || []).forEach(function (pref) { lines.push('· Preferencia: ' + pref) })
+          if (lines.length) {
+            if (memory.selfFacts && memory.selfFacts.length) {
+              lines.push('')
+              lines.push('Sobre mí misma:')
+              memory.selfFacts.forEach(function (self) { lines.push('· ' + self) })
+            }
+            if (memory.journal && memory.journal.length) {
+              lines.push('Bitácora:')
+              memory.journal.slice(-2).forEach(function (entry) { lines.push('· ' + entry) })
+            }
+          }
           if (!lines.length) {
             appendChatMessage('sys', 'Todavía no recuerdo nada de ti. Dime cosas como «me llamo …» o «recuerda que …» y las guardaré.')
             say('Todavía no sé nada de ti... cuéntame algo.', 4500)

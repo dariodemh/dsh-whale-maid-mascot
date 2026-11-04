@@ -58,7 +58,7 @@ const drawCache = new Map()
 // only stable, user-shared facts are kept, and the user can clear them.
 const MEMORY_ROUTE = '/whale-maid-mascot/memory'
 const MEMORY_TURN_CONSOLIDATION = 6
-const MEMORY_KINDS = new Set(['name', 'fact', 'preference'])
+const MEMORY_KINDS = new Set(['name', 'fact', 'preference', 'self', 'journal'])
 const MEMORY_PATTERNS = [
   {
     kind: 'name',
@@ -78,7 +78,8 @@ const MEMORY_SYSTEM = [
   'Eres el sistema de memoria de una mascota compañera local.',
   'Extrae SOLO datos estables y útiles para adaptar su comportamiento al usuario: nombre o trato preferido, preferencias claras de trato o formato, y hechos duraderos sobre su trabajo o proyectos.',
   'Ignora estados de ánimo pasajeros, peticiones de una sola vez, datos sensibles (salud, política, religión, orientación sexual, credenciales, direcciones) y cualquier cosa que ya esté en la memoria actual.',
-  'Responde SOLO con líneas con el formato "nombre: X", "hecho: X" o "preferencia: X" (máximo 3 líneas, sin numeración ni explicación). Si no hay nada nuevo, responde "nada".',
+  'Si la mascota misma anuncia en la conversación una decisión o cambio sobre su propia persona (núcleo, tono, divergencias), puedes extraerlo además como "propio:", en primera persona y con la razón.',
+  'Responde SOLO con líneas con el formato "nombre: X", "hecho: X", "preferencia: X" o "propio: X" (máximo 3 líneas, sin numeración ni explicación). Si no hay nada nuevo, responde "nada".',
 ].join(' ')
 
 function memoryCandidates(message) {
@@ -130,11 +131,12 @@ async function consolidateMemory(scope, userId, history) {
     const reply = await generate(scope, MEMORY_SYSTEM, [{ type: 'text', text: prompt }], `whale-memory-${userId}`)
     const rows = String(reply.text || '').split(/\r?\n/).slice(0, 6)
     for (const row of rows) {
-      const match = row.match(/^\s*(nombre|hecho|preferencia)\s*:\s*(.+)$/i)
+      const match = row.match(/^\s*(nombre|hecho|preferencia|propio)\s*:\s*(.+)$/i)
       if (!match) continue
-      const kind = match[1].toLowerCase() === 'hecho'
+      const label = match[1].toLowerCase()
+      const kind = label === 'hecho'
         ? 'fact'
-        : match[1].toLowerCase() === 'preferencia' ? 'preference' : 'name'
+        : label === 'preferencia' ? 'preference' : label === 'propio' ? 'self' : 'name'
       await remember(userId, kind, match[2])
     }
   } catch (error) {

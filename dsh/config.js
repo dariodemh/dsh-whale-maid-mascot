@@ -153,6 +153,8 @@ export function readMascotMemory() {
     name: typeof user.name === 'string' ? user.name : '',
     facts: Array.isArray(user.facts) ? user.facts.filter(item => typeof item === 'string') : [],
     preferences: Array.isArray(user.preferences) ? user.preferences.filter(item => typeof item === 'string') : [],
+    selfFacts: Array.isArray(user.selfFacts) ? user.selfFacts.filter(item => typeof item === 'string') : [],
+    journal: Array.isArray(user.journal) ? user.journal.filter(item => typeof item === 'string') : [],
   }
 }
 
@@ -173,6 +175,8 @@ export function rememberInMascot(kind, value) {
   }
   if (kind === 'name') user.name = clean
   else if (kind === 'preference') user.preferences = unique(Array.isArray(user.preferences) ? user.preferences : [], clean).slice(-20)
+  else if (kind === 'self') user.selfFacts = unique(Array.isArray(user.selfFacts) ? user.selfFacts : [], clean).slice(-30)
+  else if (kind === 'journal') user.journal = [...(Array.isArray(user.journal) ? user.journal : []), clean].slice(-12)
   else user.facts = unique(Array.isArray(user.facts) ? user.facts : [], clean).slice(-40)
   user.updatedAt = new Date().toISOString()
   store.users[ids[0]] = user
@@ -196,6 +200,19 @@ function memoryBlock(memory) {
     ...memory.facts.slice(-8),
   ]
   if (remembered.length > 0) lines.push('Memoria compartida:', ...remembered.map(item => `- ${item}`))
+  // The character's own history lives in its own sections: deliberate decisions
+  // ("self") and periodic self-review entries ("journal") never mix with the
+  // user's facts and preferences.
+  const own = [
+    ...memory.selfFacts.slice(-8),
+    ...memory.journal.slice(-2).map(item => `Bitácora: ${item}`),
+  ]
+  if (own.length > 0) {
+    lines.push(
+      'Cosas propias tuyas (decisiones y evolución que registraste sobre tu persona; no son datos del usuario):',
+      ...own.map(item => `- ${item}`),
+    )
+  }
   return lines.length > 0 ? `\n${lines.join('\n')}` : ''
 }
 

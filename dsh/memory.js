@@ -21,6 +21,8 @@ const LIMITS = {
   users: 20,
   facts: 40,
   preferences: 20,
+  self: 30,
+  journal: 12,
   threads: 20,
   name: 40,
   text: 200,
@@ -75,6 +77,8 @@ function normalizeUser(user) {
     name: '',
     facts: [],
     preferences: [],
+    selfFacts: [],
+    journal: [],
     turns: 0,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -84,6 +88,8 @@ function normalizeUser(user) {
     name: cleanText(user.name, LIMITS.name),
     facts: cleanList(user.facts, LIMITS.facts),
     preferences: cleanList(user.preferences, LIMITS.preferences),
+    selfFacts: cleanList(user.selfFacts, LIMITS.self),
+    journal: cleanList(user.journal, LIMITS.journal),
     turns: Number.isFinite(user.turns) ? Math.max(0, Math.floor(user.turns)) : 0,
     createdAt: typeof user.createdAt === 'string' ? user.createdAt : base.createdAt,
     updatedAt: typeof user.updatedAt === 'string' ? user.updatedAt : base.updatedAt,
@@ -132,6 +138,8 @@ function publicUser(user) {
     name: user.name,
     facts: [...user.facts],
     preferences: [...user.preferences],
+    selfFacts: [...user.selfFacts],
+    journal: [...user.journal],
     turns: user.turns,
     updatedAt: user.updatedAt,
   }
@@ -149,7 +157,10 @@ export async function getMemory(userId) {
 
 /**
  * Append one remembered item. `kind` is "name" (preferred name/nickname),
- * "fact" (stable fact) or "preference" (how the user likes things).
+ * "fact" (stable fact) or "preference" (how the user likes things) — those live
+ * in the user's own section. "self" (a deliberate decision/evolution of the
+ * character herself) and "journal" (a periodic self-review entry) live in the
+ * character's own sections, so both histories stay separate.
  */
 export async function remember(userId, kind, value) {
   if (!validUserId(userId)) return null
@@ -167,6 +178,15 @@ export async function remember(userId, kind, value) {
           user.preferences.push(text)
           user.preferences = user.preferences.slice(-LIMITS.preferences)
         }
+      } else if (kind === 'self') {
+        if (!user.selfFacts.some((item) => item.toLowerCase() === text.toLowerCase())) {
+          user.selfFacts.push(text)
+          user.selfFacts = user.selfFacts.slice(-LIMITS.self)
+        }
+      } else if (kind === 'journal') {
+        // Journal entries are dated snapshots, not deduplicated statements.
+        user.journal.push(text)
+        user.journal = user.journal.slice(-LIMITS.journal)
       } else {
         if (!user.facts.some((item) => item.toLowerCase() === text.toLowerCase())) {
           user.facts.push(text)
@@ -235,6 +255,20 @@ export function memoryToPrompt(memory) {
   if (memory.name) lines.push(`- Nombre o trato preferido: ${memory.name}`)
   for (const fact of (memory.facts || []).slice(-8)) lines.push(`- ${fact}`)
   for (const preference of (memory.preferences || []).slice(-8)) lines.push(`- Preferencia: ${preference}`)
-  if (!lines.length) return ''
-  return '\n\nMemoria persistente del usuario (adáptate a ella, no la enumeres ni inventes recuerdos que no estén aquí):\n' + lines.join('\n')
+  const userLines = [...lines]
+  lines.length = 0
+  for (const self of (memory.selfFacts || []).slice(-8)) lines.push(`- ${self}`)
+  for (const entry of (memory.journal || []).slice(-2)) lines.push(`- Bitácora: ${entry}`)
+  const selfLines = [...lines]
+  if (userLines.length) {
+    userLines.unshift(
+      '\n\nMemoria persistente del usuario (adáptate a ella, no la enumeres ni inventes recuerdos que no estén aquí):',
+    )
+  }
+  if (selfLines.length) {
+    selfLines.unshift(
+      '\n\nCosas propias de ti (decisiones y evolución que registraste sobre ti misma; no son datos del usuario):',
+    )
+  }
+  return userLines.join('\n') + selfLines.join('\n')
 }

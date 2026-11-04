@@ -305,11 +305,11 @@ class WhaleTelegram {
     try {
       this.scope.effect(() => tools.register({
         name: 'whale_remember',
-        description: 'Save one stable fact, the preferred name or a preference about the user into Whale-chan\'s long-term memory, shared with her in-page chat in DeepSeek Harness. Use it when the user shares something durable worth remembering.',
+        description: 'Save one stable fact, the preferred name, a preference about the user, or one of your own deliberate evolution entries, into Whale-chan\'s long-term memory, shared with her in-page chat in DeepSeek Harness. Use it when the user shares something durable worth remembering or when you yourself choose to keep a decision about who you are.',
         parameters: {
           type: 'object',
           properties: {
-            kind: { type: 'string', enum: ['name', 'fact', 'preference'], description: 'name: how to address the user; fact: durable fact about them or their work; preference: how they like things.' },
+            kind: { type: 'string', enum: ['name', 'fact', 'preference', 'self', 'journal'], description: 'name: how to address the user; fact: durable fact about them or their work; preference: how they like things; self: your own deliberate decision/evolution, first person, with the reason; journal: a dated self-review entry about your evolution.' },
             value: { type: 'string', description: 'Short, self-contained text (max ~200 characters).' },
           },
           required: ['kind', 'value'],
@@ -317,7 +317,8 @@ class WhaleTelegram {
         },
         output,
         execute: async (args) => {
-          const kind = args?.kind === 'name' || args?.kind === 'preference' ? args.kind : 'fact'
+          const known = ['name', 'fact', 'preference', 'self', 'journal']
+          const kind = known.includes(args?.kind) ? args.kind : 'fact'
           const result = rememberInMascot(kind, args?.value)
           if (!result.ok) throw new Error(result.error)
           return { remembered: true, kind, value: String(args?.value ?? '').trim() }
@@ -386,6 +387,8 @@ class WhaleTelegram {
     if (memory.name) lines.push(`Te llamás ${memory.name}.`)
     if (memory.preferences.length) lines.push('Preferencias:', ...memory.preferences.map(item => `- ${item}`))
     if (memory.facts.length) lines.push('Recuerdos:', ...memory.facts.map(item => `- ${item}`))
+    if (memory.selfFacts.length) lines.push('Sobre mí misma:', ...memory.selfFacts.map(item => `- ${item}`))
+    if (memory.journal.length) lines.push('Bitácora:', ...memory.journal.slice(-2).map(item => `- ${item}`))
     return lines.length === 0 ? 'No tengo nada guardado todavía.' : lines.join('\n')
   }
 
