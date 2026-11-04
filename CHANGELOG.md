@@ -6,6 +6,15 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.4.1 — 2026-11-04
+
+### Changed
+
+- **Neutral packaged default**: `dsh/persona.md` (and its embedded copy in
+  `dsh/config.js`) is now a neutral, functional assistant with no character or
+  tone. The character is defined per install, in `~/.dsh/persona.md` or with
+  `persona` in config; installs that already have one see no change.
+
 ## 2.4.0 — 2026-11-04
 
 ### Changed

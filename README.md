@@ -126,18 +126,22 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 
 ### Customize the character
 
-The default text ships with the package (`dsh/persona.md`), with the name as
-`{{name}}`. To change it, from narrowest to widest scope:
+The package ships a neutral assistant (`dsh/persona.md`): no personality, no
+tone, just how to use tools and reply in the user's language. To give her a
+character:
 
-- **Just the name**: `"personaName": "…"` in `~/.dsh/whale-maid.json`.
-- **The full text, privately**: create `~/.dsh/persona.md` (same format,
-  `{{name}}` included). It wins over the packaged one and survives updates.
+- **Privately, as a file**: write `~/.dsh/persona.md` (same format, plain text;
+  `{{name}}` is optional and is replaced by `personaName`). It survives updates.
 - **From the config**: `persona` in `~/.dsh/whale-maid.json` or in the profile
-  row; it replaces everything and wins over both files.
+  row, as the full text.
+- **Just the name**: `"personaName": "…"` in `~/.dsh/whale-maid.json`.
+
+Precedence: `persona` in config > `~/.dsh/persona.md` > packaged
+`dsh/persona.md` > embedded copy of it.
 
 Memory is not part of the text: it lives in
 `~/.dsh/whale-maid-mascot/memory.json` and is appended to the end of the prompt
-in all three cases.
+in every case.
 
 ## Security
 
