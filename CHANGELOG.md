@@ -6,6 +6,31 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.5.0 — 2026-11-04
+
+### Added
+
+- **Light chat session** (`lightChat`, on by default): the in-page chat runs in
+  its own session (`<shared session>-chat`) instead of the shared one, so a
+  mascot line never queues behind a heavy agent turn. It keeps the same persona
+  and the same long-term memory, and each turn appends a short digest of the
+  main conversation, so it still knows what is being discussed. Set
+  `lightChat: false` to go back to one single session.
+- **Proactive review** (`reviewEnabled`, `reviewEveryMs` default 3 min): every
+  few minutes the mascot runs a review turn in `<shared session>-review`, sees
+  the last messages of the main conversation plus the files touched recently,
+  and decides whether writing to the owner is worth it. A `SKIP` reply stays
+  silent; `reviewCooldownMs` (default 15 min) stops messages from piling up.
+  When nothing changed, it stays quiet for up to 30 minutes at a time.
+- **`ownerName`** (default `el dueño`): how the assistant refers to you in the
+  conversation digest and the review prompt. It carries no personal data out of
+  the box; set it in `~/.dsh/whale-maid.json` to use your name.
+
+### Changed
+
+- The in-page transcript now loads the light chat session, so the panel shows
+  its own thread instead of the main conversation.
+
 ## 2.4.1 — 2026-11-04
 
 ### Changed

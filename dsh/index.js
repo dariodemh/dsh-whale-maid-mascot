@@ -30,8 +30,8 @@ import {
   memoryPrompt,
   validUserId,
 } from './memory.js'
-import { askSession, historyJson, promptParts } from './session.js'
-import { loadConfig, personaBody } from './config.js'
+import { askSession, historyJson, promptParts, sharedTranscript } from './session.js'
+import { lightSessionId, loadConfig, loadState, personaBody } from './config.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -704,12 +704,26 @@ async function handleChat(scope, req, res) {
   }
   const memoryText = userId ? await memoryPrompt(userId) : ''
 
-  // The shared mascot session: the in-page chat runs in the same DSH session as Telegram,
-  // so it has real tools and the same conversation. Falls back to the plain LLM
-  // call if the session controller is unavailable or the turn fails.
+  // The in-page chat runs in a light sibling session: same persona, same long-term
+  // memory, plus a short digest of the main conversation. That keeps a mascot line
+  // from queueing behind (and paying for) a heavy agent turn, while still knowing
+  // what the owner has been talking about. `lightChat: false` restores the shared session.
   if (agentHostScope && typeof agentHostScope.sessionController === 'object') {
     try {
-      const result = await askSession(agentHostScope, promptParts(message, rawImages))
+      const config = loadConfig()
+      const light = config.lightChat !== false
+      const parts = promptParts(message, rawImages)
+      if (light) {
+        const digest = await sharedTranscript(agentHostScope, 8)
+        if (digest) {
+          parts.push({
+            type: 'text',
+            text: `Conversación reciente en la app (contexto, no la respondas):\n${digest}`,
+          })
+        }
+      }
+      const target = light ? { sessionId: lightSessionId(config, loadState()) } : {}
+      const result = await askSession(agentHostScope, parts, target)
       const agentReply = typeof result?.text === 'string' ? result.text : ''
       if (agentReply !== '') {
         const imageUrls = admitted.refs.map(cacheImageRef).filter(Boolean)

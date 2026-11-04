@@ -6,7 +6,7 @@
  * tools) as a message sent from the other. The persona section is bound once per
  * live agent, no matter which surface reached it first.
  */
-import { loadConfig, loadState, personaText, sharedSessionId } from './config.js'
+import { lightSessionId, loadConfig, loadState, ownerName, personaText, sharedSessionId } from './config.js'
 
 const personaBound = new Set()
 const personaDisposers = []
@@ -96,20 +96,23 @@ export function promptParts(message, images) {
   return parts
 }
 
-/** Resolve or create the shared session; applies the permission preset and persona. */
-export async function ensureSession(scope) {
+/** Resolve or create a session; applies the permission preset and persona. */
+export async function ensureSession(scope, options = {}) {
   if (!scope?.sessionController) throw new Error('sessionController unavailable')
   const config = loadConfig()
   const state = loadState()
-  const sessionId = sharedSessionId(config, state)
+  const sessionId = typeof options.sessionId === 'string' && options.sessionId
+    ? options.sessionId
+    : sharedSessionId(config, state)
   const controller = scope.sessionController
+  const cwd = typeof options.cwd === 'string' && options.cwd ? options.cwd : config.cwd
 
   let agent = null
   const existing = await controller.resolveAgent(sessionId)
   if (existing && typeof existing === 'object' && !('error' in existing) && existing.agent) {
     agent = existing.agent
   } else {
-    const request = { sessionId, cwd: config.cwd }
+    const request = { sessionId, cwd }
     if (config.agentPreset) request.agentPreset = config.agentPreset
     await controller.create(request)
     const created = await controller.resolveAgent(sessionId)
@@ -127,9 +130,9 @@ export async function ensureSession(scope) {
   return { agent, sessionId, config, state }
 }
 
-/** Runs one turn in the shared session and returns its final assistant text. */
-export async function askSession(scope, parts) {
-  const { agent, sessionId, config } = await ensureSession(scope)
+/** Runs one turn in a session (the shared one by default) and returns its final assistant text. */
+export async function askSession(scope, parts, options = {}) {
+  const { agent, sessionId, config } = await ensureSession(scope, options)
   if (agent.status && agent.status !== 'idle') await waitTurn(scope, sessionId, 10 * 60 * 1000)
 
   const before = agent.session.snapshotEvents().length
@@ -149,13 +152,15 @@ export async function askSession(scope, parts) {
   return { outcome, text: lastAssistantText(agent.session.snapshotEvents().slice(before)), sessionId }
 }
 
-/** Recent transcript of the shared session, for the in-page chat panel. */
+/** Recent transcript of the session the in-page chat actually uses. */
 export async function historyJson(scope) {
   if (!scope?.sessionController) return { messages: [] }
   try {
     const config = loadConfig()
     const state = loadState()
-    const sessionId = sharedSessionId(config, state)
+    const sessionId = config.lightChat === false
+      ? sharedSessionId(config, state)
+      : lightSessionId(config, state)
     const resolved = await scope.sessionController.resolveAgent(sessionId)
     if (!resolved || typeof resolved !== 'object' || 'error' in resolved || !resolved.agent) return { messages: [] }
     const messages = []
@@ -170,6 +175,36 @@ export async function historyJson(scope) {
     return { messages: [] }
   }
 }
+
+/**
+ * A short digest of the main (shared) conversation, so a light session keeps the
+ * thread without paying for the whole transcript. Returns '' when unavailable.
+ */
+export async function sharedTranscript(scope, limit = 8) {
+  if (!scope?.sessionController) return ''
+  try {
+    const config = loadConfig()
+    const state = loadState()
+    const sessionId = sharedSessionId(config, state)
+    const resolved = await scope.sessionController.resolveAgent(sessionId)
+    if (!resolved || typeof resolved !== 'object' || 'error' in resolved || !resolved.agent) return ''
+    const name = config.personaName || DEFAULTS_NAME
+    const owner = ownerName(config)
+    const turns = []
+    for (const event of resolved.agent.session.snapshotEvents()) {
+      if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue
+      const text = messageText(event)
+      if (!text) continue
+      const who = event.type === 'user/message' ? owner : name
+      turns.push(`${who}: ${text.replace(/\s+/g, ' ').trim().slice(0, 240)}`)
+    }
+    return turns.slice(-Math.max(1, limit)).join('\n')
+  } catch {
+    return ''
+  }
+}
+
+const DEFAULTS_NAME = 'Whale-chan'
 
 function messageText(event) {
   const content = Array.isArray(event?.data?.content)

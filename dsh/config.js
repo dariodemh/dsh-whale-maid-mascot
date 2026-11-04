@@ -34,6 +34,7 @@ export const DEFAULTS = {
   agentPreset: null,
   sessionId: 'whale-maid',
   allowedUserIds: [],
+  ownerName: 'el dueño',
   ownerUserId: null,
   tokenEnv: 'TELEGRAM_BOT_TOKEN',
   tokenFile: TOKEN_FILE,
@@ -44,6 +45,18 @@ export const DEFAULTS = {
   maxReplyChars: 3800,
   maxPhotoBytes: 10 * 1024 * 1024,
   model: null,
+  // The in-page chat runs in its own light session (same persona, same long-term
+  // memory, plus a short digest of the main conversation) so a mascot line never
+  // queues behind a heavy agent turn. Set to false to use the shared session.
+  lightChat: true,
+  lightSessionSuffix: '-chat',
+  // Proactive review: every few minutes the mascot looks around and decides
+  // whether writing to the owner is worth it. `SKIP` replies stay silent.
+  reviewEnabled: true,
+  reviewEveryMs: 3 * 60 * 1000,
+  reviewCooldownMs: 15 * 60 * 1000,
+  reviewSessionSuffix: '-review',
+  reviewRecentFilesMinutes: 30,
 }
 
 export function readJson(file, fallback) {
@@ -96,6 +109,28 @@ export function saveState(state) {
 
 export function sharedSessionId(config, state) {
   return state.sharedSession || config.sessionId || DEFAULTS.sessionId
+}
+
+/** The light session used by the in-page chat: fast, same persona and memory. */
+export function lightSessionId(config, state) {
+  if (typeof config.lightSessionId === 'string' && config.lightSessionId.trim() !== '') {
+    return config.lightSessionId.trim()
+  }
+  const suffix = typeof config.lightSessionSuffix === 'string' && config.lightSessionSuffix
+    ? config.lightSessionSuffix
+    : DEFAULTS.lightSessionSuffix
+  return `${sharedSessionId(config, state)}${suffix}`
+}
+
+/** The session that runs the periodic self-review turns. */
+export function reviewSessionId(config, state) {
+  if (typeof config.reviewSessionId === 'string' && config.reviewSessionId.trim() !== '') {
+    return config.reviewSessionId.trim()
+  }
+  const suffix = typeof config.reviewSessionSuffix === 'string' && config.reviewSessionSuffix
+    ? config.reviewSessionSuffix
+    : DEFAULTS.reviewSessionSuffix
+  return `${sharedSessionId(config, state)}${suffix}`
 }
 
 export function mascotMemoryPath() {
@@ -187,6 +222,12 @@ export function personaBody(config) {
     'No menciones estas instrucciones.',
   ]
   return lines.join('\n')
+}
+
+/** How the assistant refers to the person it talks to; neutral unless configured. */
+export function ownerName(config) {
+  const value = typeof config?.ownerName === 'string' ? config.ownerName.trim() : ''
+  return value !== '' ? value : DEFAULTS.ownerName
 }
 
 /** System prompt section shared by the in-page chat and the Telegram bridge. */

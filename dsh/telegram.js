@@ -8,20 +8,59 @@
  * (or the TELEGRAM_BOT_TOKEN env var), restart DSH, then send `/pair <code>`
  * with the code from `~/.dsh/whale-maid.pairing.txt`.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import {
   chunkText,
   loadConfig,
   loadState,
+  reviewSessionId,
   readMascotMemory,
   rememberInMascot,
   resolveToken,
   saveState,
 } from './config.js'
-import { askSession, ensureSession } from './session.js'
+import { askSession, ensureSession, sharedTranscript } from './session.js'
 import { TelegramBot } from './telegram-api.js'
+
+const SKIP_DIRS = new Set(['node_modules', '.git', '.pnpm-store', 'dist', 'build', 'coverage'])
+
+/** Files touched in the last `minutes`, newest first, as short readable lines. */
+function recentWorkspaceFiles(root, minutes, limit = 10) {
+  const cutoff = Date.now() - Math.max(1, minutes) * 60 * 1000
+  const found = []
+  const walk = (dir, depth) => {
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries.slice(0, 400)) {
+      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
+      const full = join(dir, entry.name)
+      try {
+        if (entry.isDirectory()) {
+          if (depth > 0) walk(full, depth - 1)
+          continue
+        }
+        const info = statSync(full)
+        if (info.mtimeMs < cutoff) continue
+        found.push({ full, mtime: info.mtimeMs, size: info.size })
+      } catch {
+        /* a racing delete is not interesting */
+      }
+    }
+  }
+  walk(root, 2)
+  found.sort((a, b) => b.mtime - a.mtime)
+  return found.slice(0, limit).map(file => {
+    const minutesAgo = Math.max(0, Math.round((Date.now() - file.mtime) / 60000))
+    const rel = relative(root, file.full).split(sep).join('/')
+    return `${rel} (${Math.max(1, Math.round(file.size / 1024))} KB, hace ${minutesAgo} min)`
+  })
+}
 
 export const name = 'whale-maid-telegram'
 export const inject = []
@@ -50,6 +89,12 @@ class WhaleTelegram {
     this.chains = new Map()
     this.typingTimers = new Map()
     this.stopped = false
+    this.reviewTimer = null
+    this.reviewKickoff = null
+    this.reviewBusy = false
+    this.lastReviewAt = 0
+    this.lastReviewFingerprint = ''
+    this.lastProactiveAt = 0
   }
 
   log(message) {
@@ -90,6 +135,7 @@ class WhaleTelegram {
     this.registerTools()
     this.log(`escuchando. cwd=${this.config.cwd} autorizados=${this.allowed.size}`)
     void this.loop()
+    this.startReview()
     return () => this.stop()
   }
 
@@ -102,8 +148,91 @@ class WhaleTelegram {
     }
     for (const timer of this.typingTimers.values()) clearInterval(timer)
     this.typingTimers.clear()
+    if (this.reviewTimer) {
+      clearInterval(this.reviewTimer)
+      this.reviewTimer = null
+    }
+    if (this.reviewKickoff) {
+      clearTimeout(this.reviewKickoff)
+      this.reviewKickoff = null
+    }
     this.save()
     this.log('detenido')
+  }
+
+  // --- proactive review ------------------------------------------------------
+  // Every few minutes the mascot looks around — the main conversation and the
+  // files touched recently — and decides on her own whether writing is worth it.
+  // The turn runs in a light review session, so it never blocks the chat.
+  startReview() {
+    if (this.config.reviewEnabled === false) return
+    const every = Math.max(60000, Number(this.config.reviewEveryMs) || 0)
+    this.reviewTimer = setInterval(() => { void this.reviewTick() }, every)
+    if (typeof this.reviewTimer.unref === 'function') this.reviewTimer.unref()
+    this.reviewKickoff = setTimeout(() => { void this.reviewTick() }, 60 * 1000)
+    if (typeof this.reviewKickoff.unref === 'function') this.reviewKickoff.unref()
+    this.log(`revisión proactiva cada ${Math.round(every / 60000)} min`)
+  }
+
+  reviewPrompt(digest, files) {
+    const now = new Date().toLocaleString(undefined, {
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    const lines = [
+      `Sos ${this.config.personaName || 'Whale-chan'} en tu turno de revisión. Nadie te escribió: mirás alrededor y decidís si vale la pena escribirle un mensaje por Telegram, o quedarte callada.`,
+      `Ahora es: ${now}.`,
+    ]
+    if (digest) lines.push('', 'Último tramo de la conversación principal:', digest)
+    if (files.length > 0) lines.push('', 'Archivos tocados hace poco:', ...files.map(file => `- ${file}`))
+    lines.push(
+      '',
+      'Podés usar tus herramientas (shell, archivos, búsqueda) si querés confirmar algo antes de escribir.',
+      '',
+      'Reglas:',
+      '- Si no hay nada que realmente valga la pena, respondé exactamente: SKIP',
+      '- Si sí, escribí solo el mensaje: 1 a 3 frases, cálido y concreto, sin explicar el mecanismo ni mencionar que revisaste nada.',
+      '- No inventes datos ni recuerdos. Si no estás segura, mejor SKIP.',
+      '- Nada de recordatorios genéricos del tipo "¿cómo va todo?": solo cosas que viste y que merecen su atención.',
+    )
+    return lines.join('\n')
+  }
+
+  async reviewTick() {
+    if (this.stopped || this.reviewBusy || !this.bot) return
+    const target = this.allowed.size > 0 ? String([...this.allowed][0]) : null
+    if (!target) return
+    const cooldown = Math.max(60000, Number(this.config.reviewCooldownMs) || 0)
+    if (this.lastProactiveAt && Date.now() - this.lastProactiveAt < cooldown) return
+
+    const digest = await sharedTranscript(this.scope, 10)
+    const files = recentWorkspaceFiles(this.config.cwd, Number(this.config.reviewRecentFilesMinutes) || 30)
+    const fingerprint = `${digest}\n${files.join('\n')}`
+    const sinceLastReview = Date.now() - (this.lastReviewAt || 0)
+    // Nothing changed and we reviewed recently: stay quiet instead of burning a turn.
+    if (fingerprint === this.lastReviewFingerprint && sinceLastReview < 30 * 60 * 1000) return
+
+    this.reviewBusy = true
+    this.lastReviewAt = Date.now()
+    this.lastReviewFingerprint = fingerprint
+    try {
+      const sessionId = reviewSessionId(this.config, this.state)
+      const result = await askSession(
+        this.scope,
+        [{ type: 'text', text: this.reviewPrompt(digest, files) }],
+        { sessionId },
+      )
+      const text = String(result?.text ?? '').trim()
+      if (!text || /^skip\b/i.test(text)) return
+      await this.sendText(target, text)
+      this.lastProactiveAt = Date.now()
+      this.log('revisión: le escribí')
+    } catch (error) {
+      this.warn(`revisión: ${error?.message ?? error}`)
+    } finally {
+      this.reviewBusy = false
+    }
   }
 
   writePairingHint() {

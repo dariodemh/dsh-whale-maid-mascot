@@ -112,10 +112,18 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 | --- | --- | --- |
 | `cwd` | `~/Documents/deepseek-harness/default-workspace` | Directory the shared agent session owns |
 | `personaName` | `Whale-chan` | Name she uses for herself in the prompt and messages |
+| `ownerName` | `el dueño` | How she refers to you in the prompt (a neutral phrase; set your name to personalize it) |
 | `persona` | — | Full replacement system prompt (e.g. another language or character) |
 | `permissionPreset` | `danger-full-access` | DSH permission preset for the session (`workspace-write` is stricter) |
 | `agentPreset` | profile default | Agent preset for the session |
 | `sessionId` | `whale-maid` | Shared session id; change it to start a separate conversation |
+| `lightChat` | `true` | Run the in-page chat in a light sibling session instead of the shared one |
+| `lightSessionId` | `<sessionId>-chat` | Explicit id for that light session |
+| `reviewEnabled` | `true` | Periodic self-review that may write to you on Telegram on its own |
+| `reviewEveryMs` | `180000` | How often the review looks around (minimum 1 minute) |
+| `reviewCooldownMs` | `900000` | Quiet time after she writes on her own |
+| `reviewSessionId` | `<sessionId>-review` | Session used for the review turns |
+| `reviewRecentFilesMinutes` | `30` | Window of "recently touched files" she inspects |
 | `allowedUserIds` | `[]` | Extra Telegram user ids allowed without pairing |
 | `tokenEnv` | `TELEGRAM_BOT_TOKEN` | Env var holding the bot token |
 | `tokenFile` | `~/.dsh/whale-maid.token` | File holding the bot token |
@@ -144,6 +152,21 @@ The in-page chat and the shared session (Telegram/DSH) read the same persona.
 Memory is not part of the text: it lives in
 `~/.dsh/whale-maid-mascot/memory.json` and is appended to the end of the prompt
 in every case.
+
+### Light session and proactive review
+
+By default the in-page chat runs in `<sessionId>-chat`, not in the shared
+session. Same persona, same `memory.json`, and every turn gets a short digest of
+the main conversation appended — so it keeps the thread without paying for (or
+queueing behind) a heavy agent turn. Set `lightChat: false` to have one single
+session again.
+
+The Telegram bridge also runs a review loop: every `reviewEveryMs` the mascot
+takes a turn in `<sessionId>-review`, looks at the last messages of the main
+conversation and the files touched in the last `reviewRecentFilesMinutes`, and
+decides whether writing is worth it. If not, it answers `SKIP` and stays silent;
+`reviewCooldownMs` stops messages from piling up, and when nothing changed it
+stays quiet for up to 30 minutes.
 
 ## Security
 
@@ -176,11 +199,12 @@ in every case.
 - `dsh/session.js` opens (or resumes) the shared session, applies the permission
   preset, binds the Whale-chan persona section once, sends prompts, waits for
   `turn/end`, and reads the final `assistant/message`.
-- `dsh/index.js` keeps the mascot features; its chat route prefers the shared
-  session and falls back to a plain LLM call if DSH has no session controller.
+- `dsh/index.js` keeps the mascot features; its chat route uses the light
+  session (`lightChat`) and falls back to the shared session or a plain LLM call
+  when DSH has no session controller.
 - `dsh/telegram.js` is the Telegram side: long polling, pairing, commands, live
-  edits, native image attachments, and the `telegram_send` / `whale_remember`
-  global tools.
+  edits, native image attachments, the periodic self-review, and the
+  `telegram_send` / `whale_remember` global tools.
 - `dsh/client.js` is the browser half: mascot, chat panel, image lightbox
   (click to enlarge), and it reloads the shared transcript when the chat opens.
 
