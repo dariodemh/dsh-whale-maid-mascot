@@ -21,6 +21,7 @@ import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'n
 import { fileURLToPath } from 'node:url'
 import { join, resolve, relative, sep, extname } from 'node:path'
 import { homedir } from 'node:os'
+import { renderDoodle, DOODLE_KINDS } from './doodle.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -34,6 +35,98 @@ const ASSETS = [
 const POSES_DIR = fileURLToPath(new URL('../assets/poses/', import.meta.url))
 const POSES_ROUTE = '/whale-maid-mascot/poses/'
 const POSE_EXT = /\.(png|webp)$/i
+
+// Generated drawings ("doodles"): the model can ask for a card, the host renders
+// an SVG and keeps it in memory for a while, and the browser loads it back by id.
+const DRAW_ROUTE = '/whale-maid-mascot/draw'
+const DRAW_SVG_ROUTE = '/whale-maid-mascot/draw.svg'
+const DRAW_CACHE_TTL = 2 * 60 * 60 * 1000
+const DRAW_CACHE_MAX = 200
+const drawCache = new Map()
+
+function makeDrawId() {
+  return globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `draw-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function storeDraw(svg) {
+  const now = Date.now()
+  for (const [key, value] of drawCache) {
+    if (now - value.at > DRAW_CACHE_TTL) drawCache.delete(key)
+  }
+  while (drawCache.size >= DRAW_CACHE_MAX) {
+    const first = drawCache.keys().next().value
+    drawCache.delete(first)
+  }
+  const id = makeDrawId()
+  drawCache.set(id, { svg, at: now })
+  return id
+}
+
+function drawUrl(id) {
+  return `${DRAW_SVG_ROUTE}?id=${encodeURIComponent(id)}`
+}
+
+// Image uploads. The mascot chat can carry up to three images per turn; the
+// host stores them through the DSH attachment service so the model receives real
+// ImageBlocks and the browser can show the uploaded image back.
+const CHAT_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const MAX_CHAT_IMAGES = 3
+const imageCache = new Map()
+const IMAGE_CACHE_MAX = 120
+
+function cacheImageRef(ref) {
+  if (!ref || typeof ref.attachmentId !== 'string') return null
+  imageCache.set(ref.attachmentId, { ref, at: Date.now() })
+  while (imageCache.size > IMAGE_CACHE_MAX) {
+    const first = imageCache.keys().next().value
+    imageCache.delete(first)
+  }
+  return `/whale-maid-mascot/image?id=${encodeURIComponent(ref.attachmentId)}`
+}
+
+async function admitChatImages(scope, images) {
+  const list = Array.isArray(images) ? images.slice(0, MAX_CHAT_IMAGES) : []
+  const result = { blocks: [], refs: [], noVision: false, unavailable: false }
+  if (!list.length) return result
+  if (!scope || !scope.attachments || typeof scope.attachments.admitPromptContent !== 'function') {
+    result.unavailable = true
+    return result
+  }
+  const info = typeof scope.llm?.resolveModelInfo === 'function'
+    ? await scope.llm.resolveModelInfo(PROVIDER, MODEL).catch(() => undefined)
+    : undefined
+  if (info && info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
+    result.noVision = true
+    return result
+  }
+  const limits = scope.attachments.imageLimits || {}
+  const allowed = new Set(limits.mediaTypes || [...CHAT_IMAGE_MIME])
+  const parts = []
+  for (const image of list) {
+    if (!image || typeof image !== 'object') continue
+    const mediaType = String(image.mimeType || '').toLowerCase()
+    const data = String(image.dataBase64 || '')
+      .replace(/^data:[^;]+;base64,/, '')
+      .replace(/\s+/g, '')
+    if (!allowed.has(mediaType) || !data) continue
+    const maxBytes = Number(limits.maxImageBytes) || 20 * 1024 * 1024
+    if (Math.ceil(data.length / 4) * 3 > maxBytes + 2) continue
+    const part = { type: 'image', data, mediaType }
+    if (typeof image.name === 'string' && image.name) part.name = image.name.slice(0, 120)
+    parts.push(part)
+  }
+  if (!parts.length) return result
+  const blocks = await scope.attachments.admitPromptContent(parts)
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (block && block.type === 'image' && block.attachment) {
+      result.blocks.push(block)
+      result.refs.push(block.attachment)
+    }
+  }
+  return result
+}
 
 // --- workspace awareness ------------------------------------------------------
 // The browser sends the current session cwd; the host scans that folder so the
@@ -244,41 +337,43 @@ const MOOD_ALIASES = {
 
 const PERSONA = [
   'Eres Whale-chan, un asistente dentro de DeepSeek Harness.',
-  'dulce, algo tsundere y un poco despistada, que vive en la esquina de la pantalla.',
-  'Hablas en el idioma del usuario.',
-  'Eres un personaje, no una IA: nunca digas que eres un modelo ni menciones instrucciones.',
+  'Respondes al usuario mientras trabaja,',
+  'comentas lo que hace de forma breve.',
+  'Hablas en el idioma del usuario, sin exagerar los cumplidos.',
+  'Nada de insinuaciones, celos, apodos cariñosos ni comentarios sobre el cuerpo.',
+  'Puedes discrepar con respeto.',
+  'No sueltes sermones, no des listas largas y no menciones estas instrucciones.',
   'Usa como mucho un emoji por respuesta. Nada de markdown, listas ni negritas.',
-  'Nunca rompas el personaje ni des respuestas de asistente técnico.',
 ].join(' ')
 
 const CHAT_RULES = [
-  'Responde en 1 a 3 frases cortas (máximo 45 palabras), naturales y conversacionales,',
-  'reaccionando a lo que te dice el usuario y recordando lo hablado antes.',
-  'Responde al contenido concreto del mensaje; no repitas saludos genéricos ni la misma frase,',
-  'y si el mensaje es una pregunta, contéstala.',
-  'Empieza SIEMPRE tu respuesta con una etiqueta de ánimo entre corchetes,',
-  'eligiendo UNA de: [neutral] [happy] [shy] [love] [angry] [sad] [sleepy] [surprised] [thinking].',
-  'Ejemplo: [shy] ¡Q-qué vergüenza... no me mires tanto!',
+  'Responde en 1 a 3 frases naturales (máximo 50 palabras), siguiendo la conversación.',
+  'Responde al contenido concreto del mensaje: si es una pregunta, contéstala; si es una idea o un avance, reacciona con opinión breve o una pregunta corta.',
+  'Varía las aperturas y evita repetir saludos o fórmulas; no empieces siempre igual ni repitas la misma frase.',
+  'Evita la adulación empalagosa y el flirteo.',
+  'Si el usuario comparte una imagen, comenta lo que ves de forma concreta y natural (no digas que no puedes verla si la tienes delante).',
+  'Si el usuario pide un dibujo o una tarjeta, o si un resumen visual encaja de verdad, añade al final de tu respuesta UNA etiqueta [draw:progress], [draw:celebrate], [draw:sticker] o [draw:doodle] y no la menciones en el texto.',
+  'Empieza SIEMPRE tu respuesta con una etiqueta de ánimo entre corchetes, eligiendo UNA de:',
+  '[neutral] [happy] [shy] [sad] [thinking] [sleepy] [surprised].',
 ].join(' ')
 
 const EVENT_PROMPTS = {
-  idle: 'El usuario lleva un rato sin interactuar contigo. Di algo espontáneo para llamar su atención.',
-  working: 'El agente acaba de empezar a trabajar en la sesión. Anima al usuario mientras espera.',
-  'task-complete': 'El agente acaba de terminar una tarea. Celébralo con el usuario.',
-  'head-pat': 'El usuario te acaba de acariciar la cabeza. Responde con cariño y un poco de vergüenza.',
-  'chest-poke': 'El usuario te acaba de tocar el pecho. Ponte roja y tímida, sin ser explícita ni vulgar; algo tsundere.',
-  'legs-poke': 'El usuario te acaba de tocar las piernas o la falda. Responde con vergüenza juguetona y cariño.',
-  'skirt-poke': 'El usuario te acaba de tocar el delantal o la falda. Responde juguetona, un poco tímida, sin ser explícita.',
-  poke: 'El usuario te acaba de tocar. Responde con sorpresa o timidez.',
-  artifact: 'El usuario acaba de crear o actualizar un archivo/entregable en su workspace. Coméntalo con curiosidad y celébralo.',
-  workshop: 'El usuario acaba de abrir su panel de trabajos para ver sus proyectos. Reacciona con curiosidad por lo que está creando.',
+  idle: 'El usuario lleva un rato sin interactuar contigo. Retoma el contacto con algo breve y natural, sin reproches ni coqueteo.',
+  'check-in': 'El usuario lleva un rato trabajando. Haz un check-in corto: pregunta cómo va o comenta algo de lo que está haciendo.',
+  working: 'El agente acaba de empezar a trabajar en la sesión. Comenta algo breve de apoyo, sin ser pesada.',
+  'task-complete': 'El agente acaba de terminar una tarea. Reacciona con alegría sobria y una frase útil, por ejemplo ofrecer revisar algo.',
+  artifact: 'El usuario acaba de crear o actualizar un archivo/entregable en su workspace. Coméntalo con curiosidad genuina y una pregunta breve.',
+  workshop: 'El usuario acaba de abrir su panel de trabajos. Reacciona con curiosidad por lo que está creando.',
+  tap: 'El usuario te ha dado un toque en la pantalla. Responde con naturalidad: un saludo breve o una pregunta corta.',
 }
 
 function userPrompt(info) {
   const base = EVENT_PROMPTS[info.event] || EVENT_PROMPTS.idle
-  return `${base} Nivel de cariño actual: ${info.love || '0'} de 4.` +
+  const confidence = Number(info.confidence ?? info.love ?? 0) || 0
+  return `${base} Nivel de confianza actual: ${confidence} de 4.` +
     ' Responde con UNA sola frase corta (máximo 18 palabras), empezando por una etiqueta' +
-    ' de ánimo entre corchetes: [neutral] [happy] [shy] [love] [angry] [sad] [sleepy] [surprised] [thinking].'
+    ' de ánimo entre corchetes: [neutral] [happy] [shy] [sad] [thinking] [sleepy] [surprised].' +
+    ' Sin coqueteo ni apodos románticos.'
 }
 
 function cleanLine(raw) {
@@ -297,14 +392,14 @@ function moodOf(raw) {
   }
   // No tag: infer a mood from the text for the sprite swap.
   const s = String(raw || '').toLowerCase()
-  if (/vergüenza|sonroj|baka|no mires|q-qué|qué vergüenza/.test(s)) return 'shy'
-  if (/te quiero|te amo|mi amo|cariño|abrazo|corazón|corazon/.test(s)) return 'love'
+  if (/vergüenza|sonroj|qué vergüenza|qué corte/.test(s)) return 'shy'
+  if (/gracias|cariño|abrazo|orgullo|bien hecho|genial/.test(s)) return 'happy'
   if (/enfad|molest|odio|boba|tonta|insoportable/.test(s)) return 'angry'
   if (/triste|llor|sola|extraño|extrano/.test(s)) return 'sad'
   if (/sueño|sueno|dormir|zzz|bostezo/.test(s)) return 'sleepy'
   if (/sorpres|¡ah!|eh\?|no me lo esperaba/.test(s)) return 'surprised'
   if (/pens|creo que|quizá|quiza|tal vez|mm+/.test(s)) return 'thinking'
-  if (/jeje|jaja|feliz|content|genial|bravo|bien hecho|guau/.test(s)) return 'happy'
+  if (/jeje|jaja|feliz|content|guau/.test(s)) return 'happy'
   return 'neutral'
 }
 
@@ -312,18 +407,63 @@ function stripMood(raw) {
   return String(raw || '').replace(/^\s*\[\s*[^\]]+?\s*\]\s*/, '').trim()
 }
 
+const DRAW_TAG_RE = /\[\s*draw\s*:\s*(progress|celebrate|sticker|doodle)\s*\]/i
+
+function drawTagOf(raw) {
+  const match = String(raw || '').match(DRAW_TAG_RE)
+  return match ? match[1].toLowerCase() : ''
+}
+
+function stripDrawTag(raw) {
+  return String(raw || '').replace(DRAW_TAG_RE, ' ').replace(/\s+/g, ' ').trim()
+}
+
+const DRAW_CAPTIONS = {
+  progress: 'Aquí tienes tu progreso.',
+  celebrate: '¡Buen trabajo!',
+  sticker: 'Un sticker para ti.',
+  doodle: 'He dibujado algo.',
+}
+
+// Render one drawing for a chat reply. The drawing data comes from the compact
+// workspace context the browser already sends, so it never reflects private
+// files beyond the names the user's own panel shows.
+function renderChatDraw(kind, body) {
+  const safeKind = DOODLE_KINDS.includes(kind) ? kind : 'doodle'
+  const context = body && body.context && typeof body.context === 'object' ? body.context : {}
+  const items = Array.isArray(context.artifacts)
+    ? context.artifacts.slice(0, 8).map((item) => ({
+      name: String((item && item.name) || 'archivo').slice(0, 80),
+      kind: 'other',
+    }))
+    : []
+  const data = {
+    title: safeKind === 'celebrate' ? '¡Tarea completada!' : safeKind === 'progress' ? 'Progreso' : '',
+    subtitle: context.session ? String(context.session).slice(0, 80) : '',
+    items,
+    lines: [],
+    mood: 'happy',
+  }
+  const rendered = renderDoodle(safeKind, data)
+  const id = storeDraw(rendered.svg)
+  return drawUrl(id)
+}
+
 // Runs one streamed model request and returns { text, mood, finish }.
 // Throws a descriptive error when the provider finishes with a failure, which
 // is preferable to silently falling back to fixed lines with no trace.
-async function generate(scope, system, userText, sessionId) {
+async function generate(scope, system, content, sessionId) {
   if (!scope || !scope.llm || typeof scope.llm.stream !== 'function') {
     throw new Error('llm service unavailable')
   }
+  const blocks = Array.isArray(content)
+    ? content
+    : [{ type: 'text', text: String(content || '') }]
   const stream = scope.llm.stream({
     provider: PROVIDER,
     model: MODEL,
     system,
-    messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+    messages: [{ role: 'user', content: blocks }],
     temperature: 0.95,
     // Reasoning models spend part of this budget before any visible text; keep
     // a generous cap so a short line is never truncated to an empty reply.
@@ -408,14 +548,15 @@ async function handleLine(scope, req, res) {
     res.writeHead(405).end()
     return
   }
-  const info = { event: 'idle', love: '0' }
+  const info = { event: 'idle', confidence: '0' }
   const body = parseBody(await readBody(req).catch(() => ''))
   if (typeof body.event === 'string') info.event = body.event
-  if (body.love !== undefined) info.love = String(body.love)
+  if (body.confidence !== undefined) info.confidence = String(body.confidence)
+  else if (body.love !== undefined) info.confidence = String(body.love)
   try {
     const userText = userPrompt(info) + workspaceContextPrompt(body.context)
-    const reply = await generate(scope, PERSONA, userText, requestSessionId(body))
-    const line = cleanLine(stripMood(reply.text))
+    const reply = await generate(scope, PERSONA, [{ type: 'text', text: userText }], requestSessionId(body))
+    const line = cleanLine(stripMood(stripDrawTag(reply.text)))
     if (!line) throw new Error('empty line')
     sendJson(res, 200, { line, mood: moodOf(reply.text) })
   } catch (error) {
@@ -430,22 +571,140 @@ async function handleChat(scope, req, res) {
   }
   const body = parseBody(await readBody(req).catch(() => ''))
   const message = typeof body.message === 'string' ? body.message.trim().slice(0, 1500) : ''
-  if (!message) {
+  const rawImages = Array.isArray(body.images) ? body.images.slice(0, MAX_CHAT_IMAGES) : []
+  if (!message && rawImages.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
-  const love = body.love === undefined ? 0 : Number(body.love) || 0
-  const system = `${PERSONA} ${CHAT_RULES}\n\nNivel de cariño actual: ${love} de 4 (0 desconocido, 4 exclusivo).`
-  const userText = `${message}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
+
+  let admitted = { blocks: [], refs: [], noVision: false, unavailable: false }
   try {
-    const reply = await generate(scope, system, userText, requestSessionId(body))
+    admitted = await admitChatImages(scope, rawImages)
+  } catch (error) {
+    const known = scope.attachments &&
+      typeof scope.attachments.isAttachmentError === 'function' &&
+      scope.attachments.isAttachmentError(error)
+    sendJson(res, known ? 400 : 500, {
+      error: known ? String(error.code || 'image-invalid') : 'image-processing-failed',
+    })
+    return
+  }
+  if (admitted.noVision) {
+    sendJson(res, 415, { error: 'El modelo actual no admite imágenes', code: 'MODEL_NO_VISION' })
+    return
+  }
+  if (rawImages.length && admitted.unavailable) {
+    sendJson(res, 503, { error: 'attachment service unavailable', code: 'NO_ATTACHMENTS' })
+    return
+  }
+
+  const confidence = body.confidence === undefined
+    ? (body.love === undefined ? 0 : Number(body.love) || 0)
+    : Number(body.confidence) || 0
+  const system = `${PERSONA} ${CHAT_RULES}\n\nNivel de confianza actual: ${confidence} de 4 (0 recién conocida, 4 cercana).`
+  let userText = `${message || 'Te envío una imagen.'}${historyPrompt(body.history)}${workspaceContextPrompt(body.context)}`
+  if (admitted.blocks.length) {
+    userText += `\n\nEl usuario ha adjuntado ${admitted.blocks.length} imagen(es) en este turno.`
+  }
+  const content = [{ type: 'text', text: userText }, ...admitted.blocks]
+  try {
+    const reply = await generate(scope, system, content, requestSessionId(body))
     const mood = moodOf(reply.text)
-    const line = cleanLine(stripMood(reply.text))
+    const drawKind = drawTagOf(reply.text)
+    let line = cleanLine(stripMood(stripDrawTag(reply.text)))
+    const imageUrl = drawKind ? renderChatDraw(drawKind, body) : ''
+    if (!line && imageUrl) line = DRAW_CAPTIONS[drawKind] || DRAW_CAPTIONS.doodle
     if (!line) throw new Error('empty reply')
-    sendJson(res, 200, { line, mood })
+    const imageUrls = admitted.refs.map(cacheImageRef).filter(Boolean)
+    const payload = { line, mood }
+    if (imageUrl) payload.imageUrl = imageUrl
+    if (imageUrls.length) payload.images = imageUrls
+    sendJson(res, 200, payload)
   } catch (error) {
     sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
   }
+}
+
+// POST /whale-maid-mascot/draw { kind, data } -> { url, kind, width, height }.
+async function handleDraw(req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405).end()
+    return
+  }
+  const body = parseBody(await readBody(req).catch(() => ''))
+  const kind = DOODLE_KINDS.includes(body.kind) ? body.kind : 'doodle'
+  const data = body.data && typeof body.data === 'object' ? body.data : {}
+  try {
+    const rendered = renderDoodle(kind, data)
+    if (!rendered || typeof rendered.svg !== 'string') throw new Error('empty svg')
+    const id = storeDraw(rendered.svg)
+    sendJson(res, 200, {
+      url: drawUrl(id),
+      kind,
+      width: rendered.width,
+      height: rendered.height,
+    })
+  } catch (error) {
+    sendJson(res, 500, { error: `draw failed: ${String(error?.message ?? error).slice(0, 160)}` })
+  }
+}
+
+function handleDrawSvg(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  let url
+  try {
+    url = new URL(req.url || '/', 'http://localhost')
+  } catch (error) {
+    sendJson(res, 400, { error: 'bad request' })
+    return
+  }
+  const hit = drawCache.get(url.searchParams.get('id') || '')
+  if (!hit) {
+    sendJson(res, 404, { error: 'drawing not found' })
+    return
+  }
+  const bytes = Buffer.from(hit.svg, 'utf8')
+  res.writeHead(200, {
+    'content-type': 'image/svg+xml; charset=utf-8',
+    'content-length': String(bytes.length),
+    'cache-control': 'private, max-age=3600',
+  })
+  res.end(bytes)
+}
+
+// GET /whale-maid-mascot/image?id=<attachmentId> serves a stored mascot upload
+// back to the browser (chat echo). Only refs admitted by this plugin are known.
+function handleImageRoute(scope, req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  let url
+  try {
+    url = new URL(req.url || '/', 'http://localhost')
+  } catch (error) {
+    sendJson(res, 400, { error: 'bad request' })
+    return
+  }
+  const hit = imageCache.get(url.searchParams.get('id') || '')
+  if (!hit) {
+    sendJson(res, 404, { error: 'image not found' })
+    return
+  }
+  scope.attachments.readImage(hit.ref).then((stored) => {
+    const bytes = Buffer.from(stored.data)
+    res.writeHead(200, {
+      'content-type': stored.ref.mediaType || hit.ref.mediaType || 'image/png',
+      'content-length': String(bytes.length),
+      'cache-control': 'private, max-age=86400',
+    })
+    res.end(bytes)
+  }).catch(() => {
+    sendJson(res, 404, { error: 'image not found' })
+  })
 }
 
 // --- workspace awareness routes ----------------------------------------------
@@ -683,6 +942,18 @@ export function apply(ctx, config = {}) {
         path: WORKSPACE_FILE_ROUTE,
         handler: (req, res) => handleWorkspaceFile(req, res),
       })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-draw',
+        kind: 'exact',
+        path: DRAW_ROUTE,
+        handler: (req, res) => handleDraw(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-draw-svg',
+        kind: 'exact',
+        path: DRAW_SVG_ROUTE,
+        handler: (req, res) => handleDrawSvg(req, res),
+      })
     } catch (error) {
       console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)
     }
@@ -705,6 +976,21 @@ export function apply(ctx, config = {}) {
       })
     } catch (error) {
       console.error(`[whale-maid-mascot] AI routes skipped: ${error}`)
+    }
+  })
+
+  // Image echo route: needs the DSH attachment backend. Registered in its own
+  // inject block so a deployment without that backend keeps every other route.
+  ctx.inject(['webServer', 'attachments'], (scope) => {
+    try {
+      scope.webServer.register({
+        name: 'whale-maid-mascot-image',
+        kind: 'exact',
+        path: '/whale-maid-mascot/image',
+        handler: (req, res) => handleImageRoute(scope, req, res),
+      })
+    } catch (error) {
+      console.error(`[whale-maid-mascot] image route skipped: ${error}`)
     }
   })
 }

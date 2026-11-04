@@ -24,7 +24,12 @@ sessions or a real model account.
   service or internal API, mention it in the PR and add a graceful fallback when
   possible.
 - **Tests.** Add or update a host route test for host behaviour and a Playwright
-  assertion for visible client behaviour. CI must stay green.
+  assertion for visible client behaviour. Doodle changes go with
+  `test/doodle.test.mjs`. CI must stay green.
+- **Tone.** Whale-chan is a neutral, friendly companion by default. Do not add
+  flirting, romantic nicknames, "master/amo" framing, body-related jokes or
+  suggestive lines; keep the copy warm but platonic. Tests assert that flirty
+  patterns stay out of the companion prompts.
 - **Artwork license.** Do not add images that are not covered by a license
   compatible with CC BY-NC-SA 4.0 (non-commercial, share-alike, attribution), and
   update `assets/SOURCE.md` and `ASSETS-LICENSE.md` for any new or modified asset.

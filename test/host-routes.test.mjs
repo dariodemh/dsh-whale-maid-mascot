@@ -28,7 +28,7 @@ writeFileSync(join(FIXTURE, 'entrega_final.pdf'), '%PDF-1.4 test')
 writeFileSync(join(FIXTURE, 'logo.png'), PNG_1PX)
 after(() => rmSync(FIXTURE, { recursive: true, force: true }))
 
-function harness(replyChunks) {
+function harness(replyChunks, options = {}) {
   const routes = new Map()
   const scope = {
     webServer: {
@@ -43,8 +43,47 @@ function harness(replyChunks) {
       },
     },
   }
+  if (options.attachments) scope.attachments = options.attachments
+  if (options.resolveModelInfo) scope.llm.resolveModelInfo = options.resolveModelInfo
+  else if (options.inputModalities) {
+    scope.llm.resolveModelInfo = async () => ({ inputModalities: options.inputModalities })
+  }
   apply({ inject: (services, fn) => { fn(scope) } })
   return { routes, scope }
+}
+
+// Minimal attachment-store double: admits every valid image part and returns a
+// content-addressed ref, mirroring the real `admitPromptContent` contract.
+function mockAttachments() {
+  return {
+    imageLimits: {
+      maxImageBytes: 20 * 1024 * 1024,
+      maxImagesPerMessage: 20,
+      maxMessageImageBytes: 200 * 1024 * 1024,
+      mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    },
+    isAttachmentError: () => true,
+    async admitPromptContent(parts) {
+      let n = 0
+      return parts.map((part) => {
+        if (part.type !== 'image') return part
+        n += 1
+        return {
+          type: 'image',
+          attachment: {
+            attachmentId: 'sha256:' + String(n).padStart(64, '0'),
+            mediaType: part.mediaType,
+            width: 1,
+            height: 1,
+            bytes: 1,
+          },
+        }
+      })
+    },
+    async readImage(ref) {
+      return { ref, data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) }
+    },
+  }
 }
 
 function post(handler, body) {
@@ -116,14 +155,16 @@ test('chat always sends a sessionId even when the browser omits it', async () =>
   assert.match(String(scope.lastStreamOptions.sessionId), /^whale-maid-mascot-/)
 })
 
-test('body-tap events reach the model with their zone-specific prompt', async () => {
-  const { routes, scope } = harness(chunks('[shy] ¡Ah! No mires tanto...'))
+test('tap events reach the model with the neutral companion prompt', async () => {
+  const { routes, scope } = harness(chunks('[happy] Hola otra vez.'))
   const handler = routes.get('/whale-maid-mascot/line')
-  const { status, body } = await post(handler, { event: 'chest-poke', love: 2, sessionId: 'whale-chan-test-2' })
+  const { status, body } = await post(handler, { event: 'tap', confidence: 2, sessionId: 'whale-chan-test-2' })
   assert.equal(status, 200)
-  assert.equal(body.mood, 'shy')
+  assert.equal(body.mood, 'happy')
   const userText = scope.lastStreamOptions.messages[0].content[0].text
-  assert.match(userText, /pecho/)
+  assert.match(userText, /toque/i)
+  assert.match(userText, /confianza/i)
+  assert.doesNotMatch(userText, /pecho|falda|amo/i)
 })
 
 test('chat forwards recent history and current user text', async () => {
@@ -166,11 +207,11 @@ test('an empty model reply is reported as an error', async () => {
 })
 
 test('ambient line route also returns a mood for the sprite', async () => {
-  const { routes } = harness(chunks('[happy] ¡Mi amo ha vuelto~!'))
+  const { routes } = harness(chunks('[happy] Hola, ¿cómo va?'))
   const handler = routes.get('/whale-maid-mascot/line')
   const { status, body } = await post(handler, { event: 'idle', love: 1 })
   assert.equal(status, 200)
-  assert.equal(body.line, '¡Mi amo ha vuelto~!')
+  assert.equal(body.line, 'Hola, ¿cómo va?')
   assert.equal(body.mood, 'happy')
 })
 
@@ -247,7 +288,7 @@ test('chat passes the work context to the model', async () => {
 })
 
 test('body-tap lines also receive the work context', async () => {
-  const { routes, scope } = harness(chunks('[love] ¡Qué trabajador mi amo!'))
+  const { routes, scope } = harness(chunks('[happy] Va tomando forma, ¿eh?'))
   const handler = routes.get('/whale-maid-mascot/line')
   await post(handler, {
     event: 'artifact',
@@ -256,4 +297,101 @@ test('body-tap lines also receive the work context', async () => {
   })
   const userText = scope.lastStreamOptions.messages[0].content[0].text
   assert.match(userText, /entrega_final\.pdf/)
+})
+
+// --- companion tone + image chat + drawings -----------------------------------
+
+test('the companion prompt stays friendly and free of flirting', async () => {
+  const { routes, scope } = harness(chunks('[neutral] Hola.'))
+  await post(routes.get('/whale-maid-mascot/chat'), { message: 'hola' })
+  const system = String(scope.lastStreamOptions.system)
+
+  assert.match(system, /confianza/i)
+
+  assert.doesNotMatch(system, /mi amo/i)
+
+})
+
+test('draw route renders an SVG card and serves it back by id', async () => {
+  const { routes } = harness(chunks('ok'))
+  const draw = routes.get('/whale-maid-mascot/draw')
+  assert.ok(draw, 'draw route registered')
+  const { status, body } = await post(draw, {
+    kind: 'progress',
+    data: { title: 'Progreso', items: [{ name: 'informe.docx', kind: 'doc', bytes: 2048 }] },
+  })
+  assert.equal(status, 200)
+  assert.equal(body.kind, 'progress')
+  assert.match(body.url, /^\/whale-maid-mascot\/draw\.svg\?id=/)
+
+  const svgRoute = routes.get('/whale-maid-mascot/draw.svg')
+  assert.ok(svgRoute, 'svg route registered')
+  const svg = await get(svgRoute, body.url)
+  assert.equal(svg.status, 200)
+  assert.match(String(svg.headers['content-type']), /image\/svg\+xml/)
+  const text = svg.body.toString('utf8')
+  assert.match(text, /^<svg/)
+  assert.match(text, /Progreso/)
+})
+
+test('a [draw:kind] tag becomes an imageUrl and is removed from the text', async () => {
+  const { routes } = harness(chunks('[happy] Toma, tu progreso [draw:progress]'))
+  const { status, body } = await post(routes.get('/whale-maid-mascot/chat'), {
+    message: '¿me haces una tarjeta?',
+    context: { session: 'Entrega', artifacts: [{ name: 'informe.docx' }] },
+  })
+  assert.equal(status, 200)
+  assert.equal(body.line, 'Toma, tu progreso')
+  assert.match(body.imageUrl, /^\/whale-maid-mascot\/draw\.svg\?id=/)
+})
+
+test('chat admits uploaded images and echoes them through the image route', async () => {
+  const attachments = mockAttachments()
+  const { routes, scope } = harness(chunks('[happy] Veo una captura.'), {
+    attachments,
+    resolveModelInfo: async () => ({ inputModalities: ['text', 'image'] }),
+  })
+  const handler = routes.get('/whale-maid-mascot/chat')
+  const { status, body } = await post(handler, {
+    message: 'mira esta captura',
+    images: [{ mimeType: 'image/png', dataBase64: PNG_1PX.toString('base64'), name: 'captura.png' }],
+  })
+  assert.equal(status, 200)
+  const content = scope.lastStreamOptions.messages[0].content
+  assert.ok(Array.isArray(content))
+  assert.equal(content[0].type, 'text')
+  assert.equal(content[1].type, 'image')
+  assert.match(content[1].attachment.attachmentId, /^sha256:/)
+  assert.ok(Array.isArray(body.images) && body.images.length === 1)
+  assert.match(body.images[0], /^\/whale-maid-mascot\/image\?id=sha256%3A/)
+
+  const imageRoute = routes.get('/whale-maid-mascot/image')
+  assert.ok(imageRoute, 'image route registered')
+  const served = await get(imageRoute, body.images[0])
+  assert.equal(served.status, 200)
+  assert.match(String(served.headers['content-type']), /image\//)
+  assert.deepEqual([...served.body.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47])
+})
+
+test('a text-only model rejects image uploads with 415 MODEL_NO_VISION', async () => {
+  const { routes } = harness(chunks('[neutral] Hola.'), {
+    attachments: mockAttachments(),
+    resolveModelInfo: async () => ({ inputModalities: ['text'] }),
+  })
+  const { status, body } = await post(routes.get('/whale-maid-mascot/chat'), {
+    message: 'mira',
+    images: [{ mimeType: 'image/png', dataBase64: PNG_1PX.toString('base64') }],
+  })
+  assert.equal(status, 415)
+  assert.equal(body.code, 'MODEL_NO_VISION')
+})
+
+test('image uploads fail soft when no attachment backend is mounted', async () => {
+  const { routes } = harness(chunks('[neutral] Hola.'))
+  const { status, body } = await post(routes.get('/whale-maid-mascot/chat'), {
+    message: 'mira',
+    images: [{ mimeType: 'image/png', dataBase64: PNG_1PX.toString('base64') }],
+  })
+  assert.equal(status, 503)
+  assert.equal(body.code, 'NO_ATTACHMENTS')
 })

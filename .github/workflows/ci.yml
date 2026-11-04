@@ -16,3 +16,5 @@ jobs:
           node-version: 22
       - name: Run host route tests
         run: node test/host-routes.test.mjs
+      - name: Run doodle engine tests
+        run: node test/doodle.test.mjs

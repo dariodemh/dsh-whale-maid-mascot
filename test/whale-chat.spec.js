@@ -65,19 +65,19 @@ test('the 💬 button opens the chat and taps no longer open it by accident', as
   await expect(page.locator('.wm-chat.open')).toBeHidden()
 })
 
-test('body zones show their own comments (head / chest / legs / skirt)', async ({ page }) => {
+test('taps get a neutral companion reaction, without flirting', async ({ page }) => {
   await page.goto('/test/test.html')
   await expect(page.locator('.wm-root')).toBeVisible()
   const seen = []
-  for (const y of [0.12, 0.33, 0.9, 0.6]) {
+  for (const y of [0.2, 0.6]) {
     await page.waitForTimeout(200)
     await tapZone(page, y)
     const text = (await page.locator('.wm-bubble').innerText()).trim()
     expect(text.length).toBeGreaterThan(0)
+    expect(text).not.toMatch(/amo|pecho|falda|pervert|vergüenza|corazón|piernas/i)
     seen.push(text)
   }
-  // Four different zones -> four different comments.
-  expect(new Set(seen).size).toBe(seen.length)
+  expect(seen.length).toBe(2)
   await expect(page.locator('.wm-chat.open')).toBeHidden()
 })
 
@@ -125,7 +125,7 @@ test('chat replies, shows the text in the bubble and swaps to the mood pose', as
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ line: '¡Q-qué vergüenza... no me mires tanto!', mood: 'shy' }),
+      body: JSON.stringify({ line: 'Mmm, déjame pensarlo un momento.', mood: 'thinking' }),
     })
   })
 
@@ -141,11 +141,11 @@ test('chat replies, shows the text in the bubble and swaps to the mood pose', as
   await page.locator('.wm-chat-input').press('Enter')
 
   const mascotMsg = page.locator('.wm-chat-msg.mascot').last()
-  await expect(mascotMsg).toHaveText('¡Q-qué vergüenza... no me mires tanto!')
+  await expect(mascotMsg).toHaveText('Mmm, déjame pensarlo un momento.')
   await expect(page.locator('.wm-chat-msg.user').last()).toHaveText('hola Whale-chan')
   // The speech bubble above the sprite repeats the reply.
-  await expect(page.locator('.wm-bubble.show')).toHaveText('¡Q-qué vergüenza... no me mires tanto!')
-  // shy -> side view of the current outfit.
+  await expect(page.locator('.wm-bubble.show')).toHaveText('Mmm, déjame pensarlo un momento.')
+  // thinking -> side view of the current outfit.
   await expect(page.locator('.wm-img')).toHaveAttribute('src', /poses\/school_side\.png/)
 
   // The request carries the user message, the affection level and the LLM session id.
@@ -177,19 +177,80 @@ test('chat keeps its history after a reload', async ({ page }) => {
   await page.route('**/whale-maid-mascot/chat', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ line: 'Jeje, te recuerdo~', mood: 'happy' }),
+    body: JSON.stringify({ line: 'Me acuerdo de ti, sí.', mood: 'happy' }),
   }))
   await openChat(page)
   await page.locator('.wm-chat-input').fill('¿te acuerdas de mí?')
   await page.locator('.wm-chat-input').press('Enter')
-  await expect(page.locator('.wm-chat-msg.mascot').last()).toHaveText('Jeje, te recuerdo~')
+  await expect(page.locator('.wm-chat-msg.mascot').last()).toHaveText('Me acuerdo de ti, sí.')
 
   await page.reload()
   await expect(page.locator('.wm-root')).toBeVisible()
   await clickChatButton(page)
   await expect(page.locator('.wm-chat.open')).toBeVisible()
   await expect(page.locator('.wm-chat-msg.user').last()).toHaveText('¿te acuerdas de mí?')
-  await expect(page.locator('.wm-chat-msg.mascot').last()).toHaveText('Jeje, te recuerdo~')
+  await expect(page.locator('.wm-chat-msg.mascot').last()).toHaveText('Me acuerdo de ti, sí.')
+})
+
+test('the chat accepts an attached image and sends it to the host', async ({ page }) => {
+  let chatBody = null
+  await page.route('**/whale-maid-mascot/image**', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: POSE_PNG,
+  }))
+  await page.route('**/whale-maid-mascot/chat', async (route) => {
+    chatBody = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        line: 'Veo la imagen. Bonita captura.',
+        mood: 'happy',
+        images: ['/whale-maid-mascot/image?id=sha256%3Atest'],
+      }),
+    })
+  })
+  await openChat(page)
+  await page.locator('.wm-chat input[type=file]').setInputFiles({
+    name: 'captura.png',
+    mimeType: 'image/png',
+    buffer: POSE_PNG,
+  })
+  await expect(page.locator('.wm-chat-chip img')).toBeVisible()
+  await page.locator('.wm-chat-input').fill('mira esta captura')
+  await page.locator('.wm-chat-input').press('Enter')
+  await expect(page.locator('.wm-chat-msg.mascot').last()).toContainText('Veo la imagen')
+  expect(Array.isArray(chatBody && chatBody.images)).toBe(true)
+  expect(chatBody.images[0].mimeType).toBe('image/png')
+  expect(typeof chatBody.images[0].dataBase64).toBe('string')
+  await expect(page.locator('.wm-chat-msg.user .wm-chat-img')).toHaveCount(1)
+})
+
+test('the 🖼️ button requests a progress drawing and shows it in the chat', async ({ page }) => {
+  let drawBody = null
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480"><rect width="720" height="480" fill="#0b1220"/><text x="40" y="80" fill="#e2e8f0">Progreso</text></svg>'
+  await page.route('**/whale-maid-mascot/draw.svg**', (route) => route.fulfill({
+    status: 200, contentType: 'image/svg+xml', body: svg,
+  }))
+  await page.route('**/whale-maid-mascot/draw', async (route) => {
+    drawBody = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ url: '/whale-maid-mascot/draw.svg?id=test', kind: 'progress', width: 720, height: 480 }),
+    })
+  })
+  await openChat(page)
+  await page.locator('.wm-chat-draw').click()
+  await expect(page.locator('.wm-chat-msg.mascot .wm-chat-img').last()).toBeVisible()
+  expect(drawBody && drawBody.kind).toBe('progress')
+})
+
+test('the companion menu exposes proactive and auto-draw settings', async ({ page }) => {
+  await page.goto('/test/test.html')
+  await expect(page.locator('.wm-root')).toBeVisible()
+  await page.locator('.wm-root').dispatchEvent('contextmenu', { clientX: 260, clientY: 200 })
+  await expect(page.locator('.wm-menu-item', { hasText: 'Proactividad' })).toBeVisible()
+  await expect(page.locator('.wm-menu-item', { hasText: 'Dibujos automáticos' })).toBeVisible()
 })
 
 test('a failed reply falls back to a soft in-character line', async ({ page }) => {

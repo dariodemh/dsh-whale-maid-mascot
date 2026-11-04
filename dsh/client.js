@@ -48,8 +48,14 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       }
       var POSES_MANIFEST_URL = '/whale-maid-mascot/poses.json'
       var CHAT_URL = '/whale-maid-mascot/chat'
+      var DRAW_URL = '/whale-maid-mascot/draw'
       var WORKSPACE_URL = '/whale-maid-mascot/workspace'
       var WORKSPACE_FILE_URL = '/whale-maid-mascot/workspace/file'
+      var IMAGE_MAX_BYTES = 6 * 1024 * 1024
+      var IMAGE_MAX_COUNT = 3
+      // Spontaneous-companion cadence: minimum idle time before she starts a
+      // conversation on her own. `off` disables proactive bubbles entirely.
+      var PROACTIVE_GAPS = { off: 0, low: 9 * 60000, normal: 5 * 60000, high: 2 * 60000 }
       var LS_CHAT = 'dsh-whale-maid-mascot:chat'
       var LS_CHAT_POS = 'dsh-whale-maid-mascot:chat-pos'
       var LS_WORKS_POS = 'dsh-whale-maid-mascot:works-pos'
@@ -62,121 +68,50 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var LS_EXPLAIN_SESSIONS = 'dsh-whale-maid-mascot:explain-sessions'
       var LS_NOTIF = 'dsh-whale-maid-mascot:notif'
       var LS_PROMPTS = 'dsh-whale-maid-mascot:prompts'
+      var LS_PROACTIVE = 'dsh-whale-maid-mascot:proactive'
+      var LS_AUTO_DRAW = 'dsh-whale-maid-mascot:auto-draw'
 
-      var HEAD_LINES = [
-        '¡Mimos en la cabeza~ jeje, no me despeines el mechón!',
-        'Llevo el tocado de sirvienta, ¡con cuidado~!',
-        '¡Las orejas no son un juguete!',
+      var GREETING_LINES = [
+        '¡Hola! ¿En qué andas?',
+        'Aquí sigo, por si necesitas algo.',
+        '¿Cómo va la cosa?',
+        '¡Hola! ¿Un descanso o seguimos?',
+        '¿Te echo una mano con algo?',
       ]
-      var HEAD_LINES_1 = [
-        'Jeje, vienes todos los días a acariciarme~',
-        'Si se me tuerce el tocado, ¡ayúdame a ponerlo bien!',
-      ]
-      var HEAD_LINES_2 = [
-        'Me encanta que me acaricies, ¡otra vez~!',
-        '¡Ahora el mechón está más despeinado~!',
-      ]
-      var HEAD_LINES_3 = [
-        'Tus manos son tan suaves... puedes quedarte un poco más',
-        'Cuando me acaricias, se me acelera el corazón',
-      ]
-      var HEAD_LINES_4 = [
-        'Mimos exclusivos de mi amo, qué felicidad...',
-        'No quiero que me sueltes nunca',
-      ]
-      var CHEST_LINES = [
-        '¡Ah! Ahí... ¡no se puede! (///▽///)',
-        '¡Pe-pervertido! ... pero tampoco es que no se pueda~',
-        '⁄(⁄ ⁄•⁄ω⁄•⁄ ⁄)⁄ El co-corazón me va a mil...',
-      ]
-      var CHEST_LINES_1 = [
-        'Oye... ¡ahí sigue sin poder ser!',
-        '¡Como sigas así se lo digo a mi amo!',
-      ]
-      var CHEST_LINES_2 = [
-        'Hum... ¡solo tú, nadie más!',
-        'Has escuchado mi corazón... qué vergüenza',
-      ]
-      var CHEST_LINES_3 = [
-        'Ahí... solo tú puedes...',
-        'Ya no pue-do más... qué vergüenza',
-      ]
-      var CHEST_LINES_4 = [
-        'Amo... con cariño, por favor...',
-        'Esto ya es territorio exclusivo de mi amo',
-      ]
-      var LEG_LINES = [
-        '¡No me toques la falda~!',
-        '¡Las piernas no se tocan!',
-        '¡Mis calcetines no huelen mal!',
-      ]
-      var LEG_LINES_1 = [
-        '¡No se levanta la falda!',
-        'Las piernas... solo la persona que me gusta, un poquito',
-      ]
-      var LEG_LINES_2 = [
-        'Puedes apoyarte en mis piernas un ratito',
-        'Puedes tirar de la falda un momentito, ¡solo uno!',
-      ]
-      var LEG_LINES_3 = [
-        'Puedes usar mis piernas de almohada... pero no te muevas',
-        'La falda hoy también me la he puesto por ti',
-      ]
-      var LEG_LINES_4 = [
-        'Las piernas y el corazón son de mi amo',
-        'El vuelo de la falda y mi futuro, se los entrego a mi amo',
-      ]
-      var SKIRT_LINES = [
-        '¡Se me va a levantar la falda~!',
-        '¡El delantal tiene una ballenita!',
-      ]
-      var SKIRT_LINES_1 = [
-        '¡La falda se levanta, no mires!',
-        '¿A que es lindo el delantal de ballenita?',
-      ]
-      var SKIRT_LINES_2 = [
-        'La falda gira solo para ti~',
-        'La ballenita del delantal también te está mirando',
-      ]
-      var SKIRT_LINES_3 = [
-        '¡Si la falda se vuela, solo para ti!',
-        '¿Quieres tomarme de la mano?',
-      ]
-      var SKIRT_LINES_4 = [
-        'La falda solo se mueve para mi amo',
-        'Hoy también soy la sirvienta ballenita de mi amo',
+      // Tap replies get warmer as confidence grows (level 0..4). No flirting:
+      // this is friendly companionship, not a romance.
+      var TAP_LINES = [
+        ['¿Qué tal? ¿Necesitas algo?', 'Aquí estoy, sin prisa.', '¿Seguimos con lo tuyo?'],
+        ['Hola otra vez. ¿Cómo va?', 'Me alegra verte por aquí.', '¿Quieres contarme algo?'],
+        ['¿Un respiro? Yo vigilo la pantalla.', 'Va bien la cosa, ¿eh?', 'Si te bloqueas, lo miramos juntos.'],
+        ['Me gusta acompañarte mientras trabajas.', '¿Paramos un momento a charlar?', 'Cuando quieras te escucho.'],
+        ['Aquí me tienes, como siempre.', '¿Te has tomado un descanso? Yo también paro un poco.', 'Buen trabajo hoy.'],
       ]
       var ANGRY_LINES = [
-        '¡Si me vuelves a tocar me enfado! 💢',
-        '¡Hum! ¡Tres toques seguidos, no te hablo más!',
-        '💢 Enfadada... ¡anímame ya!',
+        '¡Vale, vale! Que me mareas 😵',
+        '¡Eh, con cuidado! Que estoy aquí.',
+        'Un clic, no diez. Respira.',
       ]
       var STYLE_LINES = {
-        a: ['Volviendo al vestido de sirvienta~', 'El delantal de ballenita, ¿a que es mono?'],
-        d: ['Uniforme escolar, ¡modo normal!', 'Este uniforme me lo pongo para ti~'],
-        e: ['Sudadera cómoda, modo relax~', 'La sudadera de la ballenita, calentita'],
-        f: ['¿Me he puesto la ropa oscura? Jeje~', 'Modo ballena nocturna, ¿te gusta?'],
-      }
-      var PHRASES = {
-        head: [HEAD_LINES, HEAD_LINES_1, HEAD_LINES_2, HEAD_LINES_3, HEAD_LINES_4],
-        chest: [CHEST_LINES, CHEST_LINES_1, CHEST_LINES_2, CHEST_LINES_3, CHEST_LINES_4],
-        legs: [LEG_LINES, LEG_LINES_1, LEG_LINES_2, LEG_LINES_3, LEG_LINES_4],
-        skirt: [SKIRT_LINES, SKIRT_LINES_1, SKIRT_LINES_2, SKIRT_LINES_3, SKIRT_LINES_4],
+        a: ['Vuelvo al look de siempre.', 'El vestido de sirvienta otra vez, ¿te gusta?'],
+        d: ['Modo uniforme.', 'Cambio al uniforme escolar.'],
+        e: ['Sudadera, modo relax.', 'Con la sudadera estoy más cómoda.'],
+        f: ['Ropa oscura, por si apetece.', 'Modo ballena nocturna.'],
       }
       var LOVE_LEVELS = [0, 10, 30, 60, 100]
-      var LOVE_LEVEL_NAMES = ['Desconocido', 'Familiar', 'Cercana', 'Encariñada', 'Exclusiva']
+      var LOVE_LEVEL_NAMES = ['Nueva', 'Conocida', 'Compañera', 'Amiga', 'Cercana']
       var SKIT_LINES = [
-        'Qué silencio... ¿mi amo sigue ocupado?',
-        '(Practicando modales de sirvienta a escondidas...)',
+        '¿Todo bien por ahí?',
+        '(Mirando cómo avanzas...)',
         '♪ ~ la la ~ ♪',
-        'Qué ganas de que mi amo me acaricie...',
-        '¡Hoy también voy a proteger la conversación de mi amo!',
-        '(Mirando la pantalla sin más)',
+        '¿Te apetece un descanso?',
+        'Sigo por aquí, sin molestar.',
+        'Qué tranquilo está esto hoy.',
       ]
       var SKIT_HIGH_LINES = [
-        'Amo, cuando termines, acuérdate de acariciarme~',
-        'El tiempo contigo es mi favorito.',
-        'Quiero acompañarte siempre, siempre.',
+        'Llevas un buen rato concentrado. ¿Todo en orden?',
+        'Cuando termines esa parte, cuéntame cómo va.',
+        'Si necesitas despejarte, aquí estoy.',
       ]
       var COMMON_PROMPTS = [
         { label: '📝 Resumir la conversación', text: 'Resume los puntos clave de nuestra conversación actual.' },
@@ -242,6 +177,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var notifBtn = null
       var aiBtn = null
       var chatBtn = null
+      var progressBtn = null
       var chatToggleBtn = null
       var notifEnabled = false
       var chatPanelEl = null
@@ -254,6 +190,17 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var chatPending = false
       var chatAbortCtrl = null
       var chatTypingEl = null
+      var chatDrawBtn = null
+      var chatAttachBtn = null
+      var chatFileInput = null
+      var chatAttachListEl = null
+      var chatAttachments = []
+      var proactiveBtn = null
+      var autoDrawBtn = null
+      var lastInteractionAt = Date.now()
+      var lastProactiveAt = 0
+      var proactiveTimer = null
+      var drawSeq = 0
       var chatDrag = { active: false, offX: 0, offY: 0, moved: false }
       var bubbleLockUntil = 0
       var zoneSeq = 0
@@ -449,9 +396,9 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           'display:flex;align-items:center;justify-content:center;font-size:15px;flex:none;}' +
           '.wm-chat-head .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
           '.wm-chat-head .t small{display:block;font-weight:400;color:#94a3b8;font-size:11px;line-height:1.2;}' +
-          '.wm-chat-close,.wm-chat-clear{border:none;background:transparent;color:#64748b;font-size:15px;' +
+          '.wm-chat-close,.wm-chat-clear,.wm-chat-draw{border:none;background:transparent;color:#64748b;font-size:15px;' +
           'cursor:pointer;padding:4px 6px;border-radius:8px;flex:none;}' +
-          '.wm-chat-close:hover,.wm-chat-clear:hover{background:#f1f5f9;}' +
+          '.wm-chat-close:hover,.wm-chat-clear:hover,.wm-chat-draw:hover{background:#f1f5f9;}' +
           '.wm-chat-body{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;' +
           'min-height:110px;background:#f8fafc;}' +
           '.wm-chat-msg{max-width:86%;padding:8px 11px;border-radius:12px;white-space:pre-wrap;' +
@@ -470,6 +417,17 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           'font:inherit;cursor:pointer;flex:none;}' +
           '.wm-chat-send:disabled{opacity:.5;cursor:default;}' +
           '.wm-chat-hint{padding:0 12px 7px;color:#b6c2d2;font-size:10.5px;text-align:right;}' +
+          '.wm-chat-attach{display:flex;align-items:center;gap:6px;padding:6px 8px 0;}' +
+          '.wm-chat-attach-btn{border:none;background:#eff6ff;color:#2563eb;border-radius:9px;' +
+          'width:30px;height:30px;font-size:14px;cursor:pointer;flex:none;padding:0;}' +
+          '.wm-chat-thumbs{display:flex;gap:6px;flex-wrap:wrap;}' +
+          '.wm-chat-chip{position:relative;width:42px;height:42px;border-radius:9px;overflow:visible;' +
+          'border:1px solid #cbd5e1;background:#fff;flex:none;}' +
+          '.wm-chat-chip img{width:100%;height:100%;object-fit:cover;display:block;border-radius:8px;}' +
+          '.wm-chat-chip-x{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;' +
+          'border:none;background:#1e293b;color:#fff;font-size:10px;line-height:18px;cursor:pointer;padding:0;}' +
+          '.wm-chat-img{display:block;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px;}' +
+          '.wm-chat.wm-drop{outline:2px dashed #93c5fd;outline-offset:4px;}' +
           '.wm-works{position:fixed;left:0;top:0;z-index:2147483062;width:380px;max-width:calc(100vw - 24px);' +
           'max-height:min(68vh,560px);background:#fff;color:#1e293b;border:1px solid #cbd5e1;border-radius:16px;' +
           'box-shadow:0 24px 60px rgba(15,23,42,.35);display:none;flex-direction:column;overflow:hidden;' +
@@ -533,10 +491,9 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         return 0
       }
 
-      function pickLine(cat) {
-        var list = PHRASES[cat] || PHRASES.head
-        var idx = Math.min(loveLevel, list.length - 1)
-        return pick(list[idx])
+      function tapLine() {
+        var idx = Math.min(loveLevel, TAP_LINES.length - 1)
+        return pick(TAP_LINES[idx])
       }
 
       function addLove(amount) {
@@ -551,8 +508,8 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       }
 
       function levelUp() {
-        say('Cariño subido a Lv.' + (loveLevel + 1) + ' «' + LOVE_LEVEL_NAMES[loveLevel] + '»!')
-        setMood('love', { emoji: '💖', ms: 7000, emojiMs: 2400 })
+        say('Confianza a Lv.' + (loveLevel + 1) + ' «' + LOVE_LEVEL_NAMES[loveLevel] + '»')
+        setMood('happy', { emoji: '✨', ms: 7000, emojiMs: 2400 })
         reactClass('wm-squish', 700)
       }
 
@@ -792,6 +749,34 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         aiBtn.setAttribute('role', 'menuitem')
         aiBtn.addEventListener('click', onAiMenuClick)
 
+        proactiveBtn = document.createElement('button')
+        proactiveBtn.type = 'button'
+        proactiveBtn.className = 'wm-menu-item'
+        proactiveBtn.setAttribute('role', 'menuitem')
+        proactiveBtn.addEventListener('click', function () {
+          hideContextMenu()
+          cycleProactive()
+        })
+
+        autoDrawBtn = document.createElement('button')
+        autoDrawBtn.type = 'button'
+        autoDrawBtn.className = 'wm-menu-item'
+        autoDrawBtn.setAttribute('role', 'menuitem')
+        autoDrawBtn.addEventListener('click', function () {
+          hideContextMenu()
+          onAutoDrawMenuClick()
+        })
+
+        progressBtn = document.createElement('button')
+        progressBtn.type = 'button'
+        progressBtn.className = 'wm-menu-item'
+        progressBtn.setAttribute('role', 'menuitem')
+        progressBtn.textContent = '📊 Tarjeta de progreso'
+        progressBtn.addEventListener('click', function () {
+          hideContextMenu()
+          requestProgressCard()
+        })
+
         document.body.appendChild(menuEl)
         renderMainMenu()
       }
@@ -809,8 +794,12 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         sep4.className = 'wm-menu-sep'
         var sep5 = document.createElement('div')
         sep5.className = 'wm-menu-sep'
+        var sep6 = document.createElement('div')
+        sep6.className = 'wm-menu-sep'
         notifBtn.textContent = notifEnabled ? '🔕 Desactivar notificaciones' : '🔔 Activar notificaciones'
         aiBtn.textContent = aiEnabled() ? '🧠 Voz IA: activada' : '🧠 Voz IA: desactivada'
+        proactiveBtn.textContent = '🗣️ Proactividad: ' + proactiveLevel()
+        autoDrawBtn.textContent = '🖼️ Dibujos automáticos: ' + (readAutoDraw() ? 'sí' : 'no')
         menuEl.appendChild(archiveBtn)
         menuEl.appendChild(newSessionBtn)
         menuEl.appendChild(chatBtn)
@@ -826,6 +815,10 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         menuEl.appendChild(sep5)
         menuEl.appendChild(notifBtn)
         menuEl.appendChild(aiBtn)
+        menuEl.appendChild(sep6)
+        menuEl.appendChild(proactiveBtn)
+        menuEl.appendChild(autoDrawBtn)
+        menuEl.appendChild(progressBtn)
       }
 
       function onAiMenuClick() {
@@ -1093,15 +1086,23 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
 
       function notifyTaskComplete() {
         if (document.hidden || notifEnabled) {
-          showSystemNotification('Whale-chan', '¡Tarea terminada!')
+          showSystemNotification('Whale-chan', 'Tarea completada.')
         }
         if (!document.hidden) {
-          aiSay('task-complete', '¡Tarea terminada!')
+          aiSay('task-complete', 'Tarea completada.')
           setMood('happy', { emoji: '🎉', emojiMs: 2200, ms: 7000 })
           reactClass('wm-squish', 700)
           // Files usually land right after a turn ends: refresh the work panel
           // and let the artifact detector comment on anything new.
           setTimeout(function () { pollWorkspace({ force: true }) }, 2500)
+          if (readAutoDraw()) {
+            setTimeout(function () {
+              requestDoodle('celebrate', buildDoodleData('celebrate', {
+                title: '¡Tarea completada!',
+                lines: [currentSessionTitle() ? 'En «' + currentSessionTitle() + '»' : 'Buen trabajo.'],
+              }), { caption: pick(DRAW_CAPTIONS.celebrate) })
+            }, 3200)
+          }
         }
       }
 
@@ -1126,7 +1127,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         if (lastRunningState === false && running === true) {
           setMood('thinking', { emoji: '💪', emojiMs: 2000, ms: 8000 })
           reactClass('wm-wobble', 700)
-          aiSay('working', '¡Manos a la obra!')
+          aiSay('working', 'A trabajar, pues.')
         }
         if (lastRunningState === true && running === false) {
           notifyTaskComplete()
@@ -1755,7 +1756,16 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           var parsed = raw ? JSON.parse(raw) : []
           if (!Array.isArray(parsed)) return []
           return parsed.filter(function (m) {
-            return m && (m.role === 'user' || m.role === 'mascot') && typeof m.text === 'string' && m.text
+            return m && (m.role === 'user' || m.role === 'mascot') &&
+              ((typeof m.text === 'string' && m.text) || m.imageUrl ||
+                (Array.isArray(m.images) && m.images.length))
+          }).map(function (m) {
+            return {
+              role: m.role,
+              text: typeof m.text === 'string' ? m.text : '',
+              images: Array.isArray(m.images) ? m.images.filter(function (u) { return typeof u === 'string' }) : undefined,
+              imageUrl: typeof m.imageUrl === 'string' ? m.imageUrl : undefined,
+            }
           }).slice(-40)
         } catch (e) {
           return []
@@ -1764,7 +1774,18 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
 
       function saveChatHistory() {
         try {
-          storeSet(LS_CHAT, JSON.stringify(chatHistory.slice(-40)))
+          // Never persist data: URLs; generated/user images are referenced by
+          // their host URL so localStorage stays small.
+          var slim = chatHistory.slice(-40).map(function (m) {
+            var copy = { role: m.role, text: typeof m.text === 'string' ? m.text : '' }
+            if (m.imageUrl) copy.imageUrl = m.imageUrl
+            if (Array.isArray(m.images)) {
+              var urls = m.images.filter(function (u) { return typeof u === 'string' && u.indexOf('data:') !== 0 })
+              if (urls.length) copy.images = urls
+            }
+            return copy
+          })
+          storeSet(LS_CHAT, JSON.stringify(slim))
         } catch (e) {}
       }
 
@@ -1804,7 +1825,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         title.className = 't'
         title.textContent = 'Whale-chan'
         var sub = document.createElement('small')
-        sub.textContent = 'ballena-sirvienta · en línea'
+        sub.textContent = 'compañera · en línea'
         title.appendChild(sub)
 
         chatClearBtn = document.createElement('button')
@@ -1813,6 +1834,13 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatClearBtn.textContent = '🧹'
         chatClearBtn.title = 'Limpiar conversación'
         chatClearBtn.addEventListener('click', clearChat)
+
+        chatDrawBtn = document.createElement('button')
+        chatDrawBtn.type = 'button'
+        chatDrawBtn.className = 'wm-chat-draw'
+        chatDrawBtn.textContent = '🖼️'
+        chatDrawBtn.title = 'Crear tarjeta de progreso'
+        chatDrawBtn.addEventListener('click', function () { requestProgressCard() })
 
         chatCloseBtn = document.createElement('button')
         chatCloseBtn.type = 'button'
@@ -1823,6 +1851,25 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
 
         chatBodyEl = document.createElement('div')
         chatBodyEl.className = 'wm-chat-body'
+
+        var attachRow = document.createElement('div')
+        attachRow.className = 'wm-chat-attach'
+        chatAttachListEl = document.createElement('div')
+        chatAttachListEl.className = 'wm-chat-thumbs'
+        chatFileInput = document.createElement('input')
+        chatFileInput.type = 'file'
+        chatFileInput.accept = 'image/png,image/jpeg,image/webp,image/gif'
+        chatFileInput.multiple = true
+        chatFileInput.style.display = 'none'
+        chatFileInput.addEventListener('change', onChatFilesPicked)
+        chatAttachBtn = document.createElement('button')
+        chatAttachBtn.type = 'button'
+        chatAttachBtn.className = 'wm-chat-attach-btn'
+        chatAttachBtn.textContent = '📎'
+        chatAttachBtn.title = 'Adjuntar imagen (o pégala con Ctrl+V)'
+        chatAttachBtn.addEventListener('click', function () { try { chatFileInput.click() } catch (e) {} })
+        attachRow.appendChild(chatAttachBtn)
+        attachRow.appendChild(chatAttachListEl)
 
         var foot = document.createElement('div')
         foot.className = 'wm-chat-foot'
@@ -1845,16 +1892,22 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
 
         head.appendChild(who)
         head.appendChild(title)
+        head.appendChild(chatDrawBtn)
         head.appendChild(chatClearBtn)
         head.appendChild(chatCloseBtn)
         foot.appendChild(chatInputEl)
         foot.appendChild(chatSendBtn)
         chatPanelEl.appendChild(head)
         chatPanelEl.appendChild(chatBodyEl)
+        chatPanelEl.appendChild(attachRow)
         chatPanelEl.appendChild(foot)
         chatPanelEl.appendChild(hint)
+        chatPanelEl.appendChild(chatFileInput)
         chatPanelEl.addEventListener('pointerdown', function (e) { e.stopPropagation() })
         chatPanelEl.addEventListener('contextmenu', function (e) { e.stopPropagation() })
+        chatPanelEl.addEventListener('paste', onChatPaste)
+        chatPanelEl.addEventListener('dragover', onChatDragOver)
+        chatPanelEl.addEventListener('drop', onChatDrop)
         head.addEventListener('pointerdown', onChatHeadDown)
         head.addEventListener('pointermove', onChatHeadMove)
         head.addEventListener('pointerup', onChatHeadUp)
@@ -1878,10 +1931,23 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         }
       }
 
-      function chatEl(role, text) {
+      function chatEl(role, text, images) {
         var el = document.createElement('div')
         el.className = 'wm-chat-msg ' + role
-        el.textContent = text
+        if (text) {
+          var span = document.createElement('span')
+          span.textContent = text
+          el.appendChild(span)
+        }
+        ;(images || []).forEach(function (url) {
+          if (!url) return
+          var im = document.createElement('img')
+          im.className = 'wm-chat-img'
+          im.src = url
+          im.alt = 'imagen'
+          im.loading = 'lazy'
+          el.appendChild(im)
+        })
         return el
       }
 
@@ -1890,11 +1956,11 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatBodyEl.innerHTML = ''
         chatTypingEl = null
         if (chatHistory.length === 0) {
-          chatBodyEl.appendChild(chatEl('sys', 'Dile «hola» y verás~ 🐋'))
+          chatBodyEl.appendChild(chatEl('sys', 'Escríbele algo o cuéntale en qué estás trabajando.'))
           return
         }
         chatHistory.forEach(function (m) {
-          chatBodyEl.appendChild(chatEl(m.role, m.text))
+          chatBodyEl.appendChild(chatEl(m.role, m.text, m.images || (m.imageUrl ? [m.imageUrl] : [])))
         })
         chatBodyEl.scrollTop = chatBodyEl.scrollHeight
       }
@@ -2000,7 +2066,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatPanelEl.classList.add('open')
         chatOpenedOnce = true
         renderChatMessages()
-        if (chatHistory.length === 0) say('¡Hola, mi amo! ¿De qué hablamos? 🐋', 4500)
+        if (chatHistory.length === 0) say('Aquí estoy. ¿De qué hablamos?', 4500)
         try {
           chatInputEl.focus()
         } catch (e) {}
@@ -2029,8 +2095,8 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatHistory = []
         saveChatHistory()
         if (chatBodyEl) chatBodyEl.innerHTML = ''
-        if (chatBodyEl) chatBodyEl.appendChild(chatEl('sys', 'Conversación borrada. Empecemos de nuevo~'))
-        say('¡Hoja en blanco! ¿Qué quieres contarme?')
+        if (chatBodyEl) chatBodyEl.appendChild(chatEl('sys', 'Conversación borrada. Empezamos de cero.'))
+        say('Borrón y cuenta nueva. ¿Qué te apetece contar?')
       }
 
       function clearChatAbort() {
@@ -2056,16 +2122,16 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatTypingEl = null
       }
 
-      function appendChatMessage(role, text) {
+      function appendChatMessage(role, text, images) {
         if (!chatBodyEl) return
-        chatBodyEl.appendChild(chatEl(role, text))
+        chatBodyEl.appendChild(chatEl(role, text, images))
         chatBodyEl.scrollTop = chatBodyEl.scrollHeight
       }
 
       var CHAT_FALLBACK_LINES = [
-        'No pude procesar eso ahora mismo. ¿Me lo repites en un ratito?',
-        'No consigo pensar bien... ¿lo intentamos otra vez?',
-        'Perdón, me encontraba despistada. ¿Qué me decías?',
+        'Me he quedado en blanco un momento. ¿Me lo repites?',
+        'No consigo ordenar la frase... ¿lo intentamos otra vez?',
+        'Perdona, estaba distraída. ¿Qué me decías?',
       ]
 
       function chatHistoryPrompt() {
@@ -2074,15 +2140,186 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         })
       }
 
+      function readImageFile(file, cb) {
+        if (!file || typeof file.type !== 'string' || file.type.indexOf('image/') !== 0) return cb(null)
+        if (file.size > IMAGE_MAX_BYTES) {
+          say('Esa imagen pesa demasiado (máximo 6 MB).', 3500)
+          return cb(null)
+        }
+        var reader = new FileReader()
+        reader.onload = function () {
+          var dataUrl = String(reader.result || '')
+          var comma = dataUrl.indexOf(',')
+          if (comma < 0) return cb(null)
+          cb({
+            dataUrl: dataUrl,
+            mimeType: file.type,
+            dataBase64: dataUrl.slice(comma + 1),
+            name: file.name || 'imagen',
+          })
+        }
+        reader.onerror = function () { cb(null) }
+        reader.readAsDataURL(file)
+      }
+
+      function addChatFiles(files) {
+        var list = Array.prototype.slice.call(files || [])
+        if (!list.length) return
+        var room = IMAGE_MAX_COUNT - chatAttachments.length
+        if (room <= 0) {
+          say('Puedes adjuntar hasta ' + IMAGE_MAX_COUNT + ' imágenes.', 3500)
+          return
+        }
+        list.slice(0, room).forEach(function (file) {
+          readImageFile(file, function (att) {
+            if (!att) return
+            if (chatAttachments.length >= IMAGE_MAX_COUNT) return
+            chatAttachments.push(att)
+            renderChatAttachments()
+          })
+        })
+      }
+
+      function onChatFilesPicked(e) {
+        addChatFiles(e.target && e.target.files)
+        try { e.target.value = '' } catch (err) {}
+      }
+
+      function onChatPaste(e) {
+        var items = e.clipboardData && e.clipboardData.items
+        if (!items) return
+        var files = []
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === 'file') {
+            var file = items[i].getAsFile()
+            if (file) files.push(file)
+          }
+        }
+        if (files.length) {
+          e.preventDefault()
+          addChatFiles(files)
+        }
+      }
+
+      function onChatDragOver(e) {
+        var types = e.dataTransfer && e.dataTransfer.types
+        var hasFiles = false
+        for (var i = 0; types && i < types.length; i++) {
+          if (types[i] === 'Files') hasFiles = true
+        }
+        if (hasFiles) {
+          e.preventDefault()
+          if (chatPanelEl) chatPanelEl.classList.add('wm-drop')
+        }
+      }
+
+      function onChatDrop(e) {
+        if (chatPanelEl) chatPanelEl.classList.remove('wm-drop')
+        if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return
+        e.preventDefault()
+        e.stopPropagation()
+        addChatFiles(e.dataTransfer.files)
+      }
+
+      function renderChatAttachments() {
+        if (!chatAttachListEl) return
+        chatAttachListEl.innerHTML = ''
+        chatAttachments.forEach(function (att, index) {
+          var chip = document.createElement('div')
+          chip.className = 'wm-chat-chip'
+          var im = document.createElement('img')
+          im.src = att.dataUrl
+          im.alt = att.name || 'imagen'
+          var x = document.createElement('button')
+          x.type = 'button'
+          x.className = 'wm-chat-chip-x'
+          x.textContent = '✕'
+          x.title = 'Quitar imagen'
+          x.addEventListener('click', function () {
+            chatAttachments.splice(index, 1)
+            renderChatAttachments()
+          })
+          chip.appendChild(im)
+          chip.appendChild(x)
+          chatAttachListEl.appendChild(chip)
+        })
+      }
+
+      var DRAW_CAPTIONS = {
+        progress: ['Aquí tienes tu progreso.', 'Un vistazo a lo que llevas hecho.', 'Tarjeta de avance, recién hecha.'],
+        celebrate: ['¡Buen trabajo!', 'Esto merece una tarjeta.', 'Tarea cerrada. Bien hecho.'],
+        sticker: ['Un sticker para ti.', 'Te dejo esto por aquí.'],
+        doodle: ['He dibujado algo.', 'Un garabato rápido.'],
+      }
+
+      function buildDoodleData(kind, extra) {
+        var summary = workspaceSummary
+        var items = []
+        if (summary && Array.isArray(summary.artifacts)) {
+          summary.artifacts.slice(0, 8).forEach(function (file) {
+            items.push({ name: file.name, kind: file.kind, bytes: file.bytes })
+          })
+        }
+        var data = {
+          title: extra && extra.title ? extra.title : '',
+          subtitle: currentSessionTitle() || (summary ? summary.name : ''),
+          date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long' }),
+          items: items,
+          lines: (extra && extra.lines) || [],
+          mood: currentMood,
+          style: style,
+        }
+        if (kind === 'progress') data.title = data.title || 'Progreso'
+        if (kind === 'celebrate') data.title = data.title || '¡Tarea completada!'
+        return data
+      }
+
+      function requestDoodle(kind, data, opts) {
+        opts = opts || {}
+        return fetch(DRAW_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ kind: kind, data: data || buildDoodleData(kind) }),
+        }).then(function (res) {
+          return res.ok ? res.json() : null
+        }).then(function (out) {
+          if (!out || !out.url) return null
+          var caption = opts.caption || pick(DRAW_CAPTIONS[kind] || DRAW_CAPTIONS.doodle)
+          chatHistory.push({ role: 'mascot', text: caption, imageUrl: out.url })
+          saveChatHistory()
+          renderChatMessages()
+          say(caption, 5000)
+          setMood(kind === 'celebrate' ? 'happy' : 'neutral', { ms: 6000 })
+          return out
+        }).catch(function () { return null })
+      }
+
+      function requestProgressCard() {
+        openChat()
+        pollWorkspace({ force: true }).then(function () {
+          return requestDoodle('progress', buildDoodleData('progress'), {
+            caption: pick(DRAW_CAPTIONS.progress),
+          })
+        })
+      }
+
       function sendChatMessage(textOverride) {
         if (chatPending) return
         var text = String(textOverride !== undefined ? textOverride : (chatInputEl ? chatInputEl.value : '')).trim()
-        if (!text) return
+        var pendingImages = chatAttachments.slice()
+        if (!text && pendingImages.length === 0) return
         if (chatInputEl) {
           chatInputEl.value = ''
           autoGrowChatInput()
         }
-        chatHistory.push({ role: 'user', text: text })
+        chatAttachments = []
+        renderChatAttachments()
+        var userEntry = {
+          role: 'user',
+          text: text,
+          images: pendingImages.map(function (att) { return att.dataUrl }),
+        }
+        chatHistory.push(userEntry)
         saveChatHistory()
         renderChatMessages()
         chatPending = true
@@ -2091,12 +2328,18 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight
 
         var payload = {
-          message: text,
+          message: text || 'Te envío una imagen.',
           history: chatHistoryPrompt().slice(0, -1),
           love: loveLevel,
+          confidence: loveLevel,
           style: style,
           sessionId: getLlmSessionId(),
           context: buildWorkContext(),
+        }
+        if (pendingImages.length) {
+          payload.images = pendingImages.map(function (att) {
+            return { mimeType: att.mimeType, dataBase64: att.dataBase64, name: att.name }
+          })
         }
         var ctrl = typeof AbortController === 'function' ? new AbortController() : null
         var timer = ctrl ? setTimeout(function () {
@@ -2110,16 +2353,46 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         }
         if (ctrl) init.signal = ctrl.signal
         fetch(CHAT_URL, init)
-          .then(function (res) { return res.ok ? res.json() : null })
+          .then(function (res) {
+            if (res.status === 415) {
+              return res.json().catch(function () { return null }).then(function (body) {
+                return { __unsupported: true, error: body && body.error }
+              })
+            }
+            return res.ok ? res.json() : null
+          })
           .then(function (data) {
             finishChatTurn()
+            if (data && data.__unsupported) {
+              appendChatMessage('sys', 'Tu modelo actual no puede ver imágenes. Elige un modelo con visión para que pueda comentarlas.')
+              say('Con el modelo actual no puedo ver imágenes...', 4000)
+              setMood('sad', { ms: 6000 })
+              return
+            }
+            if (data && Array.isArray(data.images) && data.images.length) {
+              var lastUser = null
+              for (var i = chatHistory.length - 1; i >= 0; i--) {
+                if (chatHistory[i].role === 'user') { lastUser = chatHistory[i]; break }
+              }
+              if (lastUser) {
+                lastUser.images = data.images.filter(function (url) { return typeof url === 'string' })
+                saveChatHistory()
+                renderChatMessages()
+              }
+            }
             if (data && data.line) {
-              chatHistory.push({ role: 'mascot', text: data.line })
+              var entry = { role: 'mascot', text: data.line }
+              if (data.imageUrl) entry.imageUrl = data.imageUrl
+              chatHistory.push(entry)
               saveChatHistory()
-              appendChatMessage('mascot', data.line)
+              appendChatMessage('mascot', data.line, data.imageUrl ? [data.imageUrl] : [])
               say(data.line, 5000)
               setMood(data.mood, { ms: 9000 })
               reactClass('wm-squish', 600)
+            } else if (data && data.imageUrl) {
+              chatHistory.push({ role: 'mascot', text: '', imageUrl: data.imageUrl })
+              saveChatHistory()
+              renderChatMessages()
             } else {
               var fallback = pick(CHAT_FALLBACK_LINES)
               chatHistory.push({ role: 'mascot', text: fallback })
@@ -2159,14 +2432,14 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       // --- "Mis trabajos": workspace awareness ---------------------------------
 
       var WORKSHOP_LINES = [
-        '¡Voy a echar un vistazo a tus trabajos! Qué emoción~',
-        'Déjame ver lo que has estado creando, mi amo',
-        '¡Tus proyectos! Mi parte favorita del día 🐋',
+        'Voy a echar un vistazo a tus trabajos.',
+        'Déjame ver en qué has estado trabajando.',
+        'Tus proyectos. Me gusta ver el avance 🐋',
       ]
       var ARTIFACT_LINES = [
-        '¡Veo un archivo nuevo! ¿Es lo que estabas preparando?',
-        '¡Entregable nuevo en el taller! Estoy orgullosa de ti~',
-        'Mi amo no para de crear cosas, qué admiración 🐋',
+        'Veo un archivo nuevo. ¿Es lo que estabas preparando?',
+        'Entregable nuevo en el taller. ¿Quieres que lo mire?',
+        'Vas sumando cosas, se nota el avance 🐋',
       ]
       var KIND_ICONS = {
         image: '🖼️', pdf: '📕', doc: '📝', slides: '📊', sheet: '📈',
@@ -2718,8 +2991,33 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       // --- random skits + explain term -----------------------------------------
 
       function resetIdleTimer() {
+        lastInteractionAt = Date.now()
         clearTimeout(idleTimer)
-        idleTimer = setTimeout(playRandomSkit, 90000)
+        idleTimer = setTimeout(playRandomSkit, 60000)
+      }
+
+      function proactiveLevel() {
+        var value = storeGet(LS_PROACTIVE)
+        return PROACTIVE_GAPS[value] !== undefined ? value : 'normal'
+      }
+
+      function readAutoDraw() {
+        return storeGet(LS_AUTO_DRAW) !== '0'
+      }
+
+      function cycleProactive() {
+        var order = ['off', 'low', 'normal', 'high']
+        var next = order[(order.indexOf(proactiveLevel()) + 1) % order.length]
+        storeSet(LS_PROACTIVE, next)
+        renderMainMenu()
+        say(next === 'off' ? 'Vale, no te interrumpo.' : 'Proactividad: ' + next + '.')
+      }
+
+      function onAutoDrawMenuClick() {
+        var next = !readAutoDraw()
+        storeSet(LS_AUTO_DRAW, next ? '1' : '0')
+        renderMainMenu()
+        say(next ? 'Dibujos automáticos activados.' : 'Dibujos automáticos desactivados.')
       }
 
       function playRandomSkit() {
@@ -2729,18 +3027,28 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         }
         if (explainMode ||
             (menuEl && menuEl.style.display === 'block') ||
-            (archivedOverlay && archivedOverlay.style.display === 'flex')) {
+            (archivedOverlay && archivedOverlay.style.display === 'flex') ||
+            (chatPanelEl && chatPanelEl.classList.contains('open'))) {
           resetIdleTimer()
           return
         }
+        var gap = PROACTIVE_GAPS[proactiveLevel()] || 0
+        if (!gap) {
+          resetIdleTimer()
+          return
+        }
+        var now = Date.now()
+        if (now - lastInteractionAt < gap || now - lastProactiveAt < gap) {
+          idleTimer = setTimeout(playRandomSkit, 30000)
+          return
+        }
+        lastProactiveAt = now
+        var event = lastRunningState === true ? 'check-in' : 'idle'
         var lines = loveLevel >= 3 ? SKIT_HIGH_LINES.concat(SKIT_LINES) : SKIT_LINES
-        aiSay('idle', pick(lines))
-        setMood(pick(['sleepy', 'thinking', 'happy', 'neutral']), { ms: 7000 })
-        var r = Math.random()
-        if (r < 0.3) showEmoji('💤', 1800)
-        else if (r < 0.5) reactClass('wm-squish', 600)
-        else if (r < 0.65) reactClass('wm-wobble', 700)
-        resetIdleTimer()
+        aiSay(event, pick(lines))
+        setMood(pick(['thinking', 'happy', 'neutral']), { ms: 7000 })
+        if (Math.random() < 0.35) reactClass('wm-squish', 600)
+        idleTimer = setTimeout(playRandomSkit, 60000)
       }
 
       function startExplainMode() {
@@ -3276,7 +3584,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
 
       function say(text, holdMs) {
         var ms = holdMs || 2400
-        bubbleText.textContent = text || pick(HEAD_LINES)
+        bubbleText.textContent = text || pick(GREETING_LINES)
         bubble.classList.add('show')
         bubbleLockUntil = Date.now() + ms + 300
         clearTimeout(bubbleTimer)
@@ -3346,55 +3654,20 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         }
       }
 
-      function reactHead() {
+      // One friendly tap reaction: no body zones, no flirting. Rapid clicking
+      // still gets a mild comedic complaint instead of anger dialogue.
+      function reactTap() {
         var leveled = addLove(1)
-        setMood('happy', { emoji: '😊', ms: 5000 })
+        setMood('happy', { emoji: '👋', ms: 5000 })
         if (leveled) levelUp()
-        else zoneSay('head-pat', pickLine('head'))
+        else zoneSay('tap', tapLine())
         reactClass('wm-squish', 600)
       }
 
-      function reactChest() {
-        var leveled = addLove(3)
-        showBlush(2600)
-        setMood('shy', { emoji: '😳', ms: 6000 })
-        if (leveled) levelUp()
-        else {
-          zoneSay('chest-poke', pickLine('chest'))
-        }
-        reactClass('wm-squish', 700)
-      }
-
-      function reactLegs() {
-        var leveled = addLove(2)
-        setMood('shy', { emoji: '🫣', ms: 5000 })
-        if (leveled) levelUp()
-        else zoneSay('legs-poke', pickLine('legs'))
-        reactClass('wm-wobble', 700)
-      }
-
-      function reactSkirt() {
-        var leveled = addLove(1)
-        setMood('shy', { emoji: '💫', ms: 5000 })
-        if (leveled) levelUp()
-        else zoneSay('skirt-poke', pickLine('skirt'))
-        reactClass('wm-squish', 550)
-      }
-
       function reactAngry() {
-        setMood('angry', { emoji: '💢', ms: 6000, emojiMs: 2400 })
+        setMood('surprised', { emoji: '😵', ms: 6000, emojiMs: 2400 })
         say(pick(ANGRY_LINES), 3200)
         reactClass('wm-shake', 1200)
-      }
-
-      function zoneOf(e) {
-        var rect = img.getBoundingClientRect()
-        if (rect.width === 0 || rect.height === 0) return 'skirt'
-        var y = (e.clientY - rect.top) / rect.height
-        if (y < 0.22) return 'head'
-        if (y < 0.45) return 'chest'
-        if (y >= 0.78) return 'legs'
-        return 'skirt'
       }
 
       function recordRapidClick() {
@@ -3409,15 +3682,8 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       }
 
       function reactAt(e) {
-        if (recordRapidClick()) {
-          reactAngry()
-          return
-        }
-        var zone = zoneOf(e)
-        if (zone === 'head') reactHead()
-        else if (zone === 'chest') reactChest()
-        else if (zone === 'legs') reactLegs()
-        else reactSkirt()
+        if (recordRapidClick()) reactAngry()
+        else reactTap()
       }
 
       function onPointerDown(e) {
@@ -3514,7 +3780,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         try {
           storeSet(LS_HIDDEN, '0')
         } catch (err) {}
-        say('¡Ya volví~!')
+        say('Aquí estoy otra vez.')
       }
 
       function cleanup() {

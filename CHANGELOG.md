@@ -6,6 +6,46 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.0.0 — 2026-11-03
+
+Companion release: Whale-chan is now a **neutral, friendly companion** instead of a
+flirty waifu, and she can share images with you in both directions.
+
+### Changed (breaking)
+
+- **Tone rewrite**: default persona and all bubble copy are neutral and friendly.
+  Removed the romantic/tsundere lines, "amo", chest/legs/skirt reactions and body
+  jokes. The internal affection counter is now presented as **confianza**
+  (trust/confidence).
+- Tapping anywhere gets one friendly reaction instead of four body-zone comments;
+  10 rapid clicks still get a mild comedic complaint.
+- Ambient lines are now companion **check-ins** (`idle` / `check-in` events) driven
+  by a configurable proactivity level instead of scripted skits.
+
+### Added
+
+- **Image chat in both directions**: attach images with 📎, clipboard paste or
+  drag-and-drop (max 3, 6 MB each); the host admits them through DSH's attachment
+  service, sends real `ImageBlock`s to a vision-capable model and echoes them back
+  through `GET /whale-maid-mascot/image`. Text-only models get a clear
+  `MODEL_NO_VISION` notice instead of a silently blind mascot.
+- **Generated SVG cards** (`dsh/doodle.js`, deterministic, zero dependencies):
+  progress, celebrate, sticker and doodle kinds, rendered by `POST /whale-maid-mascot/draw`
+  and served from `GET /whale-maid-mascot/draw.svg`. The model can request one with
+  a `[draw:kind]` tag, the chat header has a 🖼️ button, the right-click menu has
+  *Tarjeta de progreso*, and auto-celebration can be toggled.
+- **Proactive companion settings** in the right-click menu: proactivity
+  (off / low / normal / high) and automatic drawings.
+- Host tests grew to 20 (image admission, vision guard, drawing routes, companion
+  prompt), browser tests to 22 (image attach/send, card rendering, menu toggles)
+  and a new 8-test doodle suite; CI runs the host and doodle suites.
+- Regenerated README screenshots with the neutral tone and a generated card.
+
+### Removed
+
+- Flirty/tsundere copy and the anatomical tap zones it depended on.
+- Scripted "random skit" lines in favour of context-aware check-ins.
+
 ## 1.1.0 — 2026-11-03
 
 First public release of this extended version. It is based on
