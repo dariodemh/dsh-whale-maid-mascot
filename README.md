@@ -173,6 +173,21 @@ The package is plain ESM with no build step. Tests for the mascot live in
 `test/` (Playwright); the host routes can be exercised with the mocked context in
 `test/host-routes.test.mjs`.
 
+## Optional: let her drive your machine
+
+`tools/` ships two standalone Windows PowerShell scripts that are **not** loaded
+by DSH. They are for people who want the character to actually operate the
+desktop instead of only talking:
+
+- `tools/hands.ps1` — list/focus windows, capture the screen or a single window,
+  capture **in the background without stealing focus**, move/click/drag/scroll,
+  type unicode text and send key combinations. Writing always takes focus, so
+  the script refuses to touch input while a known game is in the foreground, and
+  `-Guard <title>` aborts unless the expected window is active.
+- `tools/cc.ps1` — headless Claude Code: `ask`, `list`, `logs`, `stop`, `resume`.
+
+See [tools/README.md](tools/README.md). Nothing in `dsh/` depends on them.
+
 ## License and provenance
 
 MIT. This repository is a heavily extended derivative of

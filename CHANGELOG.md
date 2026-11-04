@@ -6,6 +6,19 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.3.0 — 2026-11-03
+
+### Added
+
+- **Optional machine-control tools** (`tools/`, published with the package but
+  never loaded by DSH): `hands.ps1` gives the character eyes and hands on
+  Windows — window enumeration, screen and per-window capture, background
+  capture through `PrintWindow` (no focus theft), mouse and unicode keyboard
+  input, a game-foreground brake so input never minimizes a fullscreen game, and
+  `-Guard` to abort unless the expected window is active. `cc.ps1` wraps the
+  Claude Code CLI headlessly (`ask`, `list`, `logs`, `stop`, `resume`).
+  Documented in `tools/README.md`.
+
 ## 2.2.0 — 2026-11-03
 
 ### Added
