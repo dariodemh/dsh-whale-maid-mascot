@@ -131,14 +131,14 @@ test('hard guards: stopped, no bot, already running, no recipient', () => {
 test('the review prompt is tool-less and carries only the precomputed context', () => {
   const prompt = reviewPrompt({
     personaName: 'Cala',
-    digest: 'Dario: hola\nCala: hola',
+    digest: 'Alex: hola\nCala: hola',
     files: ['notas.md (2 KB, hace 3 min)'],
     now: Date.UTC(2026, 10, 5, 20, 0, 0),
     maxSteps: 2,
   })
   assert.match(prompt, /Cala/)
   assert.match(prompt, /SKIP/)
-  assert.match(prompt, /Dario: hola/)
+  assert.match(prompt, /Alex: hola/)
   assert.match(prompt, /notas\.md/)
   assert.match(prompt, /NO tiene herramientas/)
   assert.match(prompt, /no podés leer archivos, correr comandos/)
@@ -170,7 +170,7 @@ function fakeLlm(chunks, { hang = false } = {}) {
 test('reviewReply makes exactly one tool-less model call', async () => {
   const llm = fakeLlm([
     { type: 'text-delta', text: 'hola ' },
-    { type: 'text-delta', text: 'Dario' },
+    { type: 'text-delta', text: 'Alex' },
     { type: 'finish', reason: { kind: 'stop' } },
   ])
   const reply = await reviewReply({
@@ -182,7 +182,7 @@ test('reviewReply makes exactly one tool-less model call', async () => {
   })
   assert.equal(llm.calls.length, 1, 'one turn, no retries')
   assert.equal(reply.timedOut, false)
-  assert.equal(reply.text, 'hola Dario')
+  assert.equal(reply.text, 'hola Alex')
   assert.equal(reply.steps, 0, 'the review does not execute tool steps')
   const options = llm.calls[0]
   assert.equal('tools' in options, false, 'no tools are offered to the model')

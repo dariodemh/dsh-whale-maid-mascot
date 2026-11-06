@@ -58,3 +58,42 @@ sessions or a real model account.
 This repository is a derivative of
 [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)
 (MIT). Keep the upstream copyright notice in `LICENSE` when modifying it.
+
+## Boot invariants (please keep these; DSH aborts the whole app otherwise)
+
+DSH audits every web client entry while it boots and throws
+`web boot: N entries did not activate` for the first one that is not `active`.
+That does not just disable the plugin: the whole desktop app fails to open.
+
+**The in-page half is disabled** (author's decision, 2026-11-06): `package.json`
+no longer declares `dsh.client`, so DSH registers no client entry for this
+package at all. The host half (the `cordis.patch.yml` rows: desktop window +
+Telegram) is unaffected, and the window still uses `/whale-maid-mascot/mood`.
+
+If the client half is ever re-enabled (`dsh.client` back in the manifest), these
+two rules are mandatory in `dsh/client.js`:
+
+1. `exports.inject` must be `[]`. A hard list (`workspaces`, `sessions`, `slots`,
+   `uiWorkspace`) leaves the fiber `pending`/`failed`, which is exactly the crash.
+   Services are resolved defensively through `adoptServices(ctx)` / `serviceOf()`.
+   The file also defines `inject` with a getter that ignores later assignments.
+2. `exports.apply` must never throw. It is a thin wrapper around `applyInner`
+   that catches everything and logs `[whale-maid-mascot] apply falló…`.
+
+Before committing an edit to the client half, run:
+
+```bash
+npm run test:boot        # node tools/client-boot-smoke.mjs  -> must print PASS
+```
+
+The host half also guards this at runtime (`dsh/boot-guard.js`: it rewrites a
+non-empty `inject` list back to `[]` and logs it to `~/.dsh/whale-maid.log`).
+
+For `assets/desktop-window.ps1`: it must stay **UTF-8 with BOM**. Windows
+PowerShell 5.1 reads a BOM-less file as ANSI, the emoji break the parser and the
+window dies with `exit 1` without any visible error. Run
+`tools/fix-ps1-bom.ps1` after editing it. `dsh/desktop.js` restores the BOM
+before spawning, but do not rely on that alone.
+
+Old copies live in `_backups/` (git-ignored) precisely so that nobody restores
+one of them over the current code: that is how the 2.10.0 regression happened.

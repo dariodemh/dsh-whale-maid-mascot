@@ -76,7 +76,7 @@ test('the route only accepts GET', () => {
 })
 
 test('loadConfig keeps interfaceMode alongside the existing keys', () => {
-  writeConfig({ interfaceMode: 'fullscreen', personaName: 'Cala', ownerName: 'Dario' })
+  writeConfig({ interfaceMode: 'fullscreen', personaName: 'Cala', ownerName: 'Alex' })
   const config = loadConfig()
   assert.equal(config.interfaceMode, 'fullscreen')
   assert.equal(config.personaName, 'Cala')

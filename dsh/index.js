@@ -31,8 +31,10 @@ import {
   validUserId,
 } from './memory.js'
 import { askSession, historyJson, promptParts, sharedTranscript } from './session.js'
+import { MoodTracker, deriveMood, moodConfig, summarizeSessionInput } from './mood.js'
 import { mergeHistoryMessages, outboxHistoryMessages, readOutboxImage } from './outbox.js'
-import { interfaceModeOf, lightSessionId, loadConfig, loadState, personaBody } from './config.js'
+import { interfaceModeOf, lightSessionId, loadConfig, loadState, personaBody, sharedSessionId } from './config.js'
+import { guardClientInject } from './boot-guard.js'
 import {
   closeDesktopWindow,
   desktopStatus,
@@ -53,6 +55,11 @@ const ASSETS = [
 const POSES_DIR = fileURLToPath(new URL('../assets/poses/', import.meta.url))
 const POSES_ROUTE = '/whale-maid-mascot/poses/'
 const POSE_EXT = /\.(png|webp)$/i
+// Mood art: the Chan pack (`assets/chan/*.png`) is served locally, same policy
+// as the poses above, and the derived mood is exposed through /mood.
+const CHAN_DIR = fileURLToPath(new URL('../assets/chan/', import.meta.url))
+const CHAN_ROUTE = '/whale-maid-mascot/chan/'
+const MOOD_ROUTE = '/whale-maid-mascot/mood'
 
 // Generated drawings ("doodles"): the model can ask for a card, the host renders
 // an SVG and keeps it in memory for a while, and the browser loads it back by id.
@@ -1102,6 +1109,46 @@ function registerPoseRoutes(scope) {
   }
 }
 
+// Chan mood art (`assets/chan/*.png`): the same local exact-route policy as the
+// poses, so the WPF window and the in-page mascot both load it from the host.
+function registerChanRoutes(scope) {
+  let files = []
+  try {
+    if (existsSync(CHAN_DIR)) files = readdirSync(CHAN_DIR).filter(file => /\.png$/i.test(file))
+  } catch {
+    return
+  }
+  for (const file of files) {
+    const path = join(CHAN_DIR, file)
+    try {
+      scope.webServer.register({
+        name: `whale-maid-mascot-chan-${file.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`,
+        kind: 'exact',
+        path: `${CHAN_ROUTE}${file}`,
+        handler: (req, res) => {
+          if (req.method !== 'GET') {
+            res.writeHead(405).end()
+            return
+          }
+          try {
+            const bytes = readFileSync(path)
+            res.writeHead(200, {
+              'content-type': 'image/png',
+              'content-length': String(bytes.length),
+              'cache-control': 'public, max-age=3600',
+            })
+            res.end(bytes)
+          } catch (error) {
+            res.writeHead(500).end(String(error?.message ?? error))
+          }
+        },
+      })
+    } catch (error) {
+      console.error(`[whale-maid-mascot] chan route skipped (${file}): ${error}`)
+    }
+  }
+}
+
 function registerImageHandler(scope, route, path) {
   scope.webServer.register({
     name: `whale-maid-mascot-${route.split('/').pop()}`,
@@ -1175,6 +1222,45 @@ export function handleOutboxImage(req, res) {
   })
   res.end(hit.bytes)
 }
+// --- mood automation ---------------------------------------------------------
+// The image follows the REAL activity of the shared session; the text persona,
+// sessions and memory are untouched. Pure logic lives in `dsh/mood.js`.
+const moodTracker = new MoodTracker()
+
+async function buildMoodInput() {
+  if (!agentHostScope || typeof agentHostScope.sessionController !== 'object') return null
+  try {
+    const config = loadConfig()
+    const state = loadState()
+    const sessionId = sharedSessionId(config, state)
+    const resolved = await agentHostScope.sessionController.resolveAgent(sessionId)
+    if (!resolved || typeof resolved !== 'object' || 'error' in resolved || !resolved.agent) return null
+    const events = resolved.agent.session.snapshotEvents()
+    return summarizeSessionInput(events, resolved.agent.status, Date.now())
+  } catch {
+    return null
+  }
+}
+
+/** GET /whale-maid-mascot/mood: derived mood for the two local surfaces. */
+export async function handleMood(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  try {
+    const config = loadConfig()
+    const input = await buildMoodInput()
+    const decision = input ? deriveMood(input, config) : { mood: 'base', reason: 'no-session' }
+    const snapshot = moodTracker.update(decision, Date.now(), moodConfig(config).minHoldMs)
+    sendJson(res, 200, snapshot)
+  } catch (error) {
+    console.error(`[whale-maid-mascot] mood skipped: ${error && error.message}`)
+    // Never fail the poll: the surfaces keep their current image.
+    sendJson(res, 200, moodTracker.fallback())
+  }
+}
+
 /** GET /whale-maid-mascot/interface: the face the browser should open with. */
 export function handleInterface(req, res) {
   if (req.method !== 'GET') {
@@ -1222,6 +1308,15 @@ async function handleDesktop(req, res) {
 export function apply(ctx, config = {}) {
   if (typeof ctx.inject !== 'function') return
 
+  // DSH aborts the whole web boot when a client entry is not `active`; a stale
+  // hard `inject` list in dsh/client.js is the only way this plugin causes it.
+  // Neutralize it before the renderer loads the bundle (see boot-guard.js).
+  try {
+    guardClientInject()
+  } catch {
+    /* the guard must never break the host */
+  }
+
   // Keep the shared agent session reachable from the chat route: the in-page
   // chat then runs with the mascot's tools instead of a plain LLM call.
   ctx.inject(['sessionController'], (scope) => {
@@ -1232,6 +1327,7 @@ export function apply(ctx, config = {}) {
     try {
       for (const asset of ASSETS) registerImageHandler(scope, asset.route, fileURLToPath(asset.file))
       registerPoseRoutes(scope)
+      registerChanRoutes(scope)
       scope.webServer.register({
         name: 'whale-maid-mascot-poses-manifest',
         kind: 'exact',
@@ -1285,6 +1381,12 @@ export function apply(ctx, config = {}) {
         kind: 'exact',
         path: OUTBOX_IMAGE_ROUTE,
         handler: (req, res) => handleOutboxImage(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-mood',
+        kind: 'exact',
+        path: MOOD_ROUTE,
+        handler: (req, res) => handleMood(req, res),
       })
       scope.webServer.register({
         name: 'whale-maid-mascot-interface',

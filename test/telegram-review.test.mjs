@@ -59,7 +59,7 @@ function makeBridge({ userAgoMs = 20 * MIN, status = 'idle', pending = 0, reply 
     {
       type: 'assistant/message',
       time: now - userAgoMs + 1000,
-      data: { message: { content: [{ type: 'text', text: 'hola, Dario' }] } },
+      data: { message: { content: [{ type: 'text', text: 'hola, Alex' }] } },
     },
     { type: 'turn/end', time: now - userAgoMs + 2000, data: {} },
   ]

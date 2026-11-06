@@ -1,7 +1,7 @@
 {
     "name":  "dsh-whale-maid-mascot",
-    "version":  "2.9.0",
-    "description":  "Whale-chan: an in-page companion for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat in the browser or from your phone, with real tools.",
+    "version":  "2.10.1",
+    "description":  "Whale-chan: a desktop companion window for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat from her window or from your phone, with real tools.",
     "author":  {
                    "name":  "dariodemh",
                    "url":  "https://github.com/dariodemh"
@@ -44,8 +44,9 @@
     "scripts":  {
                     "test":  "playwright test",
                     "test:host":  "node test/host-routes.test.mjs",
-                    "test:unit":  "node --test test/host-routes.test.mjs test/light-session.test.mjs test/persona.test.mjs test/doodle.test.mjs test/session-mutex.test.mjs test/review-gating.test.mjs test/telegram-review.test.mjs test/interface-mode.test.mjs test/interface-boot.test.mjs test/outbox.test.mjs",
-                    "test:chat":  "playwright test test/whale-chat.spec.js"
+                    "test:unit":  "node --test test/host-routes.test.mjs test/light-session.test.mjs test/persona.test.mjs test/doodle.test.mjs test/session-mutex.test.mjs test/review-gating.test.mjs test/telegram-review.test.mjs test/interface-mode.test.mjs test/interface-boot.test.mjs test/outbox.test.mjs test/mood.test.mjs",
+                    "test:chat":  "playwright test test/whale-chat.spec.js",
+                    "test:boot":  "node tools/client-boot-smoke.mjs"
                 },
     "exports":  {
                     ".":  "./dsh/index.js",
@@ -68,13 +69,6 @@
     "dsh":  {
                 "bundle":  {
                                "patch":  "./cordis.patch.yml"
-                           },
-                "client":  {
-                               "inject":  [
-
-                                          ],
-                               "platform":  "web",
-                               "immediately":  true
                            }
             },
     "license":  "SEE LICENSE IN LICENSE",

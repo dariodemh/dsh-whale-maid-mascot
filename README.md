@@ -1,10 +1,11 @@
-# Whale-chan 🐋 — a DeepSeek Harness companion, in the page and on Telegram
+# Whale-chan 🐋 — a desktop companion for DeepSeek Harness, with a Telegram twin
 
-Whale-chan (DeepSeek 娘) lives in the corner of the DeepSeek Harness web UI and,
-if you give her a Telegram bot, she also answers you from your phone. Both
-surfaces are **the same character, the same agent session and the same memory**:
-a message you send from the phone is part of the conversation you have in the
-browser, and she can use real DSH tools (files, shell, search, skills) anywhere.
+Whale-chan (DeepSeek 娘) lives in her own borderless, transparent, always-on-top
+window on your desktop: her sprite plus a chat panel. Give her a Telegram bot and
+she also answers you from your phone. Both surfaces are **the same character, the
+same DSH agent session and the same memory**: a message you send from the phone is
+part of the conversation you have in her window, and she can use real DSH tools
+(files, shell, search, skills) anywhere.
 
 This is a **research-friendly, MIT-licensed open-source plugin**. It is a
 derivative of [yefeng7531/dsh-whale-maid-mascot](https://github.com/yefeng7531/dsh-whale-maid-mascot)
@@ -13,13 +14,19 @@ your own Telegram bot: nothing is shared with this repository.
 
 ## What you get
 
-**In the page**
-- The mascot: drag her, tap her, four outfits, mood poses, speech bubbles.
-- **Chat with her**, with images in both directions, generated cards and doodles.
-- **Mis trabajos**: a workspace panel with recent files and previews.
-- **Long-term memory**: her preferred name, stable preferences and facts about
-  your projects, stored locally in `~/.dsh/whale-maid-mascot/memory.json`.
-- Proactive check-ins, archived chats, "explain this term".
+**Her window**
+- A frameless, per-pixel transparent, always-on-top sprite: drag her anywhere,
+  pick a size and an outfit, and the position survives restarts.
+- **Chat with her in that window**: images in both directions (thumbnails open a
+  full-screen viewer with zoom), file picker, drag & drop, **Ctrl+V to paste an
+  image**, and a resizable input box (`Enter` sends, `Shift+Enter` is a newline).
+- **Tray icon**: show/hide her, open the chat, resize, switch outfit, quit. Closing
+  the chat hides her to the tray instead of losing the window.
+- **Automatic mood**: her image follows what the shared session is actually doing
+  (working, thinking, waiting for you, resting…), with a manual override from the
+  menu that holds for a while.
+- Everything you type there is mirrored to Telegram, and the replies come back to
+  the same thread.
 
 **On Telegram**
 - Talk to the same character from your phone: text and photos.
@@ -36,15 +43,22 @@ your own Telegram bot: nothing is shared with this repository.
 **Shared brain**
 - One DSH session (`whale-maid` by default) backs both surfaces: same history,
   same tools, same prompt section, same memory.
-- The in-page chat reloads that transcript when you open the panel, so messages
-  sent from Telegram show up there too.
+- Images she sends or receives are mirrored locally
+  (`~/.dsh/whale-maid-outbox/`), so they show up in her window too.
 - Whale-chan can save a durable memory from either surface
   (`whale_remember`) and it shows up in the other one.
 
+> **Since 2.10.1 the plugin ships only these two halves.** The old in-page mascot
+> that lived in the web UI corner was removed — it could abort the DSH web boot.
+> See [Legacy: the in-page mascot](#legacy-the-in-page-mascot).
+
 ## Requirements
 
-- DeepSeek Harness Desktop 0.2.1-rc.5 or a compatible build (the plugin is a DSH
-  bundle: a host half plus an optional web client).
+- DeepSeek Harness Desktop 0.2.1-rc.5 or a compatible build. The plugin is a DSH
+  **host** bundle: no web client is registered, so it cannot affect the browser boot.
+- **Windows** for the companion window (it is a WPF window driven by Windows
+  PowerShell 5.1). The Telegram bridge itself is plain Node and runs wherever DSH
+  runs.
 - A model provider configured in DSH (any provider the profile already uses).
 - Optional, for Telegram: a bot token from [@BotFather](https://t.me/BotFather).
   No public IP, tunnel or webhook is needed: the bridge long-polls Telegram.
@@ -59,8 +73,22 @@ In DeepSeek Harness: **Settings → Plugins**, install:
 dsh-whale-maid-mascot
 ```
 
-Restart DSH. The mascot appears in the bottom-right corner of the web UI and the
-Telegram row loads inert (no token yet).
+Restart DSH. The window ships **off**; turn it on once:
+
+```json
+// ~/.dsh/whale-maid.json
+{ "desktopMode": true }
+```
+
+Restart DSH and she opens on her own. From then on the tray icon (**Cala**) keeps
+her one click away. Without a restart you can also open her with:
+
+```text
+GET http://127.0.0.1:<dsh-port>/whale-maid-mascot/desktop?action=open
+```
+
+(`action=open`, `close`, `hide` or `toggle`; the port is the one DSH prints at
+startup.)
 
 ### From a local checkout (development)
 
@@ -117,8 +145,16 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 | `permissionPreset` | `danger-full-access` | DSH permission preset for the session (`workspace-write` is stricter) |
 | `agentPreset` | profile default | Agent preset for the session |
 | `sessionId` | `whale-maid` | Shared session id; change it to start a separate conversation |
-| `lightChat` | `true` | Run the in-page chat in a light sibling session instead of the shared one |
+| `lightChat` | `true` | Run the window chat in a light sibling session instead of the shared one |
 | `lightSessionId` | `<sessionId>-chat` | Explicit id for that light session |
+| `desktopMode` | `false` | Open her window when DSH starts (the tray icon persists the choice) |
+| `desktopWidth` | `260` | Window width in px (120–720, keeps the sprite ratio) |
+| `desktopAlwaysOnTop` | `true` | Keep her above other windows |
+| `desktopSprite` | `a` | Outfit: `a`, `b` or `c` (and the `poses/` extras from the menu) |
+| `desktopX`, `desktopY` | — | Last dragged position (saved automatically) |
+| `chatInputHeight` | — | Last chat input height, dragged by the handle above the text box |
+| `moodIdleMinutes` | `6` | Silence before she switches to the *waiting* image |
+| `moodMinHoldMs` | `9000` | Minimum time a mood image stays before changing (anti-flicker) |
 | `reviewEnabled` | `true` | Periodic self-review that may write to you on Telegram on its own |
 | `reviewEveryMs` | `3600000` | How often the review looks around; **one hour is the floor**, not just the default |
 | `reviewCooldownMs` | `3600000` | Quiet time after she writes on her own **or after a silent SKIP** |
@@ -133,7 +169,6 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 | `tokenEnv` | `TELEGRAM_BOT_TOKEN` | Env var holding the bot token |
 | `tokenFile` | `~/.dsh/whale-maid.token` | File holding the bot token |
 | `streamReplies` | `true` | Edit a Telegram message live while she writes |
-| `interfaceMode` | `classic` | `classic` keeps the corner pet over the normal harness GUI; `fullscreen` opens her own global panel as the main view (sidebar collapsed, back with one click) |
 | `model` | profile default | `{ provider, model, reasoningEffort }` fixed for the session |
 | `turnTimeoutMs` | `900000` | Max wait for one agent turn |
 | `maxPhotoBytes` | `10485760` | Largest Telegram photo she downloads |
@@ -153,7 +188,7 @@ character:
 Precedence: `persona` in config > `~/.dsh/persona.md` > packaged
 `dsh/persona.md` > embedded copy of it.
 
-The in-page chat and the shared session (Telegram/DSH) read the same persona.
+Her window chat and the shared session (Telegram/DSH) read the same persona.
 
 Memory is not part of the text: it lives in
 `~/.dsh/whale-maid-mascot/memory.json` and is appended to the end of the prompt
@@ -161,7 +196,7 @@ in every case.
 
 ### Light session and proactive review
 
-By default the in-page chat runs in `<sessionId>-chat`, not in the shared
+By default the window chat runs in `<sessionId>-chat`, not in the shared
 session. Same persona, same `memory.json`, and every turn gets a short digest of
 the main conversation appended — so it keeps the thread without paying for (or
 queueing behind) a heavy agent turn. Set `lightChat: false` to have one single
@@ -178,25 +213,6 @@ unlike before, `SKIP` also starts the cooldown (`reviewSkipCooldownMs`, one hour
 by default), so an empty review is not repeated minutes later. Every tick is
 appended to `~/.dsh/whale-maid.log` with its time, decision and reason, so the
 behaviour can be audited afterwards.
-
-### Interface mode: the mascot as the main view
-
-`interfaceMode: "fullscreen"` (default `"classic"`) turns her into the face of
-the harness: the web client registers a **global panel** in the harness' public
-`main` slot (`ctx.slots` + `ctx.layout.selectPanel`, the same contract the
-Plugins page uses), moves the existing mascot and chat nodes into it, and
-collapses the sidebar with `ctx.layout.toggleSidebar()`. The harness keeps
-running behind the panel — same sessions, tools and Telegram — and nothing about
-chat or sessions is reimplemented. `Modo clásico` in the surface header (or
-`Pantalla completa` / `Volver al modo clásico` in the mascot's context menu)
-switches both ways at runtime.
-
-The mode is read host-side and served by `GET /whale-maid-mascot/interface`, so
-the "start in this view" preference survives reloads and applies to every browser.
-The default stays classic. On a harness build without `slots`/`layout` the mode
-degrades to a plugin-scoped fixed overlay instead of failing. The API contract,
-alternatives considered and risks are documented in
-[docs/interface-mode.md](docs/interface-mode.md).
 
 ## Security
 
@@ -216,8 +232,8 @@ alternatives considered and risks are documented in
 
 ```
 ┌──────────────────────┐        ┌───────────────────────────┐
-│  in-page client.js   │──HTTP──▶ dsh/index.js (mascot)     │──┐
-│  chat panel          │        │  /whale-maid-mascot/*     │  │
+│  her WPF window      │◀──HTTP──▶ dsh/index.js (mascot)    │──┐
+│  sprite + chat       │        │  /whale-maid-mascot/*     │  │
 └──────────────────────┘        └───────────────────────────┘  │   one DSH agent session
                                                                ├──▶  (tools, memory,
 ┌──────────────────────┐        ┌───────────────────────────┐  │    persona, history)
@@ -232,21 +248,55 @@ alternatives considered and risks are documented in
 - `dsh/index.js` keeps the mascot features; its chat route uses the light
   session (`lightChat`) and falls back to the shared session or a plain LLM call
   when DSH has no session controller.
+- `dsh/desktop.js` spawns and owns the window: `assets/desktop-window.ps1` is a
+  standalone WPF script (STA) that renders the sprite, the chat, the tray icon and
+  the image viewer, and talks to the host over the local routes.
+- `dsh/mood.js` derives one image from the real session activity (pure function,
+  unit tested) and `GET /whale-maid-mascot/mood` serves it; the window polls it
+  every 2.5 s.
 - `dsh/telegram.js` is the Telegram side: long polling, pairing, commands, live
   edits, native image attachments, the periodic self-review, and the
-  `telegram_send` / `whale_remember` global tools.
-- `dsh/client.js` is the browser half: mascot, chat panel, image lightbox
-  (click to enlarge), and it reloads the shared transcript when the chat opens.
+  `telegram_send` / `telegram_photo` / `whale_remember` global tools.
+- `dsh/outbox.js` mirrors outbound images locally so the window can show them.
 
 ## Development
 
 ```sh
 node --check dsh/index.js dsh/telegram.js dsh/session.js dsh/config.js
+npm run test:host     # host routes with a mocked context
+npm run test:unit     # node --test suites (persona, mood, outbox, review, …)
+npm run test:boot     # client-entry boot invariant (must print PASS)
 ```
 
-The package is plain ESM with no build step. Tests for the mascot live in
-`test/` (Playwright); the host routes can be exercised with the mocked context in
-`test/host-routes.test.mjs`.
+The package is plain ESM with no build step. `assets/desktop-window.ps1` **must
+stay UTF-8 with a BOM**: Windows PowerShell 5.1 reads a BOM-less file as ANSI and
+the emoji break the parser, so the window dies on start. `tools/fix-ps1-bom.ps1`
+restores it and parse-checks every `.ps1`; `dsh/desktop.js` also fixes the BOM
+before spawning, as a safety net.
+
+## Legacy: the in-page mascot
+
+Until 2.9.1 the package also registered a **web client** entry that drew the
+mascot in the corner of the DSH web UI. It was removed in **2.10.1**: DSH audits
+its client entries while booting and aborts the *whole* app for the first one
+that is not `active` (`web boot: N entries did not activate`), which turned any
+mistake in that half into "DeepSeek Harness does not start".
+
+The code is still in `dsh/client.js` (plus its browser tests) but the manifest no
+longer declares `dsh.client`, so DSH never loads it. To bring it back you would
+re-add:
+
+```json
+"dsh": {
+  "bundle": { "patch": "./cordis.patch.yml" },
+  "client": { "inject": [], "platform": "web", "immediately": true }
+}
+```
+
+…and keep the two invariants that `dsh/client.js` already implements: `inject`
+must be empty, and `apply` must never throw. `npm run test:boot` checks the
+first, and `dsh/boot-guard.js` rewrites a stray `inject` list at host startup.
+`docs/interface-mode.md` (the old global-panel mode) is kept only in git history.
 
 ## Optional: let her drive your machine
 

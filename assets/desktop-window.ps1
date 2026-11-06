@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)][string]$Sprite,
   [string]$ConfigPath = '',
   [int]$Width = 220,
@@ -242,6 +242,24 @@ $script:chanLabels = @{
   pensando = 'Pensando'; dudas = 'Dudas'; espera = 'Espera'; flotando = 'Flotando'; playa = 'Playa'; novia = 'Novia'
   atender = 'Atender'; paso = 'Paso'; espaldas = 'Espaldas'
 }
+$script:chanMoodMap = @{
+  'base' = 'base'
+  'tomando-notas' = 'notas'
+  'analizando-con-lentes' = 'lentes'
+  'seria-formal' = 'seria'
+  'cocinando' = 'cocina'
+  'comiendo-tokens' = 'pensando'
+  'dudando-pensativa' = 'dudas'
+  'esperando-aburrida' = 'espera'
+  'flotando-sonando' = 'flotando'
+  'descansando-en-la-playa' = 'playa'
+  'celebrando-de-novia' = 'novia'
+}
+# Estado automático venido del host (/mood): no pisa una elección manual reciente.
+$script:autoMoodState = ''
+$script:autoMoodMood = ''
+$script:moodManualUntil = [datetime]::MinValue
+$script:moodTask = $null
 $script:defaultState = 'base'
 if ($config -and $config.desktopChanState) {
   $wanted = [string]$config.desktopChanState
@@ -352,7 +370,7 @@ $script:win.Content = $grid
 # --- behaviour --------------------------------------------------------------
 $script:lines = @(
   '¿Otra vez trabajando? Yo te acompaño uwu',
-  'Toma agüita, Dario.',
+  'Toma agüita.',
   'Ese commit no se va a hacer solo.',
   'Descansa cinco minutos, ¿sí?',
   'Te vi concentrado, no te interrumpo.',
@@ -447,6 +465,7 @@ function Set-ChanState([string]$key, [bool]$remember) {
     if ($remember) {
       $script:defaultState = $key
       Save-Config @{ desktopChanState = $key }
+      $script:moodManualUntil = (Get-Date).AddSeconds(90)
     }
   } catch { }
 }
@@ -463,12 +482,30 @@ function State-FromMood([string]$mood) {
   }
 }
 
+# El host deriva el ánimo de la actividad real de la sesión compartida; acá solo
+# se pinta la imagen. Histéresis y prioridad viven en el host (dsh/mood.js).
+function Apply-AutoMood([string]$mood) {
+  try {
+    if ([string]::IsNullOrWhiteSpace($mood)) { return }
+    if (-not $script:chanMoodMap.ContainsKey($mood)) { return }
+    $state = [string]$script:chanMoodMap[$mood]
+    if ($state -eq '' -or -not $script:chanStates.Contains($state)) { return }
+    $script:autoMoodMood = $mood
+    if ($script:autoMoodState -eq $state) { return }
+    $script:autoMoodState = $state
+    Set-ChanState $state $false
+    Log-Note ("mood: " + $mood + " -> " + $state)
+  } catch { Log-Note ("mood apply: " + $_.Exception.Message) }
+}
+
 $script:revert = New-Object System.Windows.Threading.DispatcherTimer
 $script:revert.Interval = [TimeSpan]::FromSeconds(14)
 $script:revert.Add_Tick({
   try {
     $script:revert.Stop()
-    Set-ChanState $script:defaultState $false
+    $restoreState = $script:defaultState
+    if ($script:autoMoodState -ne '' -and $script:chanStates.Contains($script:autoMoodState)) { $restoreState = $script:autoMoodState }
+    Set-ChanState $restoreState $false
   } catch { }
 })
 
@@ -535,6 +572,13 @@ function New-MenuButton([string]$label, $action) {
   $button = New-Object System.Windows.Controls.Button
   $button.Style = $script:buttonStyle
   $button.Content = $label
+  $button.FontSize = 11
+  $button.Padding = New-Object System.Windows.Thickness(8, 4, 8, 4)
+  $button.Margin = New-Object System.Windows.Thickness(1, 1, 1, 1)
+  $button.MinHeight = 24
+  $button.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+  $button.HorizontalContentAlignment = [System.Windows.HorizontalAlignment]::Left
+  $button.ToolTip = $label
   $button.Add_Click($action)
   return $button
 }
@@ -544,6 +588,10 @@ function New-Chip([string]$label, [string]$key, [bool]$selected, $action) {
   $chip.Style = $script:chipStyle
   $chip.Content = $label
   $chip.Tag = $key
+  $chip.FontSize = 10
+  $chip.Padding = New-Object System.Windows.Thickness(7, 2, 7, 2)
+  $chip.Margin = New-Object System.Windows.Thickness(2, 2, 2, 2)
+  $chip.MinHeight = 22
   if ($selected) {
     $chip.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(77, 125, 211, 252))
     $chip.Foreground = [System.Windows.Media.Brushes]::White
@@ -556,16 +604,16 @@ function New-Label([string]$text) {
   $label = New-Object System.Windows.Controls.TextBlock
   $label.Text = $text
   $label.FontFamily = New-Object System.Windows.Media.FontFamily("Segoe UI Semibold")
-  $label.FontSize = 9
+  $label.FontSize = 8
   $label.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(125, 211, 252))
-  $label.Margin = New-Object System.Windows.Thickness(11, 2, 0, 5)
+  $label.Margin = New-Object System.Windows.Thickness(9, 1, 0, 3)
   return $label
 }
 
 function New-Separator {
   $line = New-Object System.Windows.Controls.Border
   $line.Height = 1
-  $line.Margin = New-Object System.Windows.Thickness(10, 5, 10, 5)
+  $line.Margin = New-Object System.Windows.Thickness(8, 3, 8, 3)
   $line.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(34, 255, 255, 255))
   return $line
 }
@@ -606,28 +654,150 @@ function Add-ChatLine([string]$text, [string]$who) {
 # Burbuja con una imagen del hilo compartido (p. ej. una foto espejada de
 # Telegram). Descarga los bytes por HTTP local para no depender de la cache de
 # BitmapImage con URLs.
-function Add-HistoryImage([string]$url, [string]$caption, [string]$who) {
+# Visor modal de imágenes: fondo oscuro semitransparente, imagen escalada para
+# caber en pantalla sin deformarse (Uniform), X / Esc / clic fuera para cerrar y
+# rueda del mouse para zoom simple. Reutiliza la misma ImageSource de la burbuja:
+# no descarga nada de la red.
+function Show-ImageLightbox([System.Windows.Media.ImageSource]$source) {
   try {
-    if ($null -eq $script:chatStack -or [string]::IsNullOrWhiteSpace($url)) { return }
-    $fullUrl = if ($url.StartsWith('http')) { $url } else { $script:baseUrl + $url }
-    $bytes = $script:http.GetByteArrayAsync($fullUrl).Result
-    if ($null -eq $bytes -or $bytes.Length -eq 0) { return }
-    $stream = New-Object System.IO.MemoryStream(, $bytes)
+    if ($null -eq $source) { return }
+    $viewer = New-Object System.Windows.Window
+    $viewer.WindowStyle = [System.Windows.WindowStyle]::None
+    $viewer.AllowsTransparency = $true
+    $viewer.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(216, 8, 12, 20))
+    $viewer.WindowState = [System.Windows.WindowState]::Maximized
+    $viewer.ResizeMode = [System.Windows.ResizeMode]::NoResize
+    $viewer.ShowInTaskbar = $false
+    $viewer.Topmost = $true
+    try { if ($null -ne $script:chatWin) { $viewer.Owner = $script:chatWin } } catch { }
+    $root = New-Object System.Windows.Controls.Grid
+    $root.Background = [System.Windows.Media.Brushes]::Transparent
+    $root.Focusable = $true
+    $picture = New-Object System.Windows.Controls.Image
+    $picture.Source = $source
+    $picture.Stretch = [System.Windows.Media.Stretch]::Uniform
+    [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($picture, [System.Windows.Media.BitmapScalingMode]::HighQuality)
+    $picture.Margin = New-Object System.Windows.Thickness(48)
+    $scale = New-Object System.Windows.Media.ScaleTransform(1.0, 1.0)
+    $picture.RenderTransform = $scale
+    $picture.RenderTransformOrigin = New-Object System.Windows.Point(0.5, 0.5)
+    [void]$root.Children.Add($picture)
+    $closeBtn = New-Object System.Windows.Controls.Button
+    $closeBtn.Content = '×'
+    $closeBtn.FontSize = 26
+    $closeBtn.Width = 40
+    $closeBtn.Height = 40
+    $closeBtn.Padding = New-Object System.Windows.Thickness(0)
+    $closeBtn.BorderThickness = New-Object System.Windows.Thickness(0)
+    $closeBtn.Background = [System.Windows.Media.Brushes]::Transparent
+    $closeBtn.Foreground = [System.Windows.Media.Brushes]::White
+    $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $closeBtn.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+    $closeBtn.Margin = New-Object System.Windows.Thickness(0, 14, 18, 0)
+    $closeBtn.ToolTip = 'Cerrar (Esc)'
+    $closeBtn.Add_Click({ param($cs, $ce) try { $viewer.Close() } catch { } })
+    [void]$root.Children.Add($closeBtn)
+    $hint = New-Object System.Windows.Controls.TextBlock
+    $hint.Text = 'Esc o clic fuera para cerrar · rueda para zoom'
+    $hint.FontSize = 11
+    $hint.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(180, 226, 232, 240))
+    $hint.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $hint.VerticalAlignment = [System.Windows.VerticalAlignment]::Bottom
+    $hint.Margin = New-Object System.Windows.Thickness(0, 0, 0, 18)
+    $hint.IsHitTestVisible = $false
+    [void]$root.Children.Add($hint)
+    $root.Add_MouseLeftButtonDown({ param($gs, $ge) try { if ($ge.OriginalSource -eq $root) { $viewer.Close() } } catch { } })
+    $zoom = {
+      param($zs, $ze)
+      try {
+        $factor = if ($ze.Delta -gt 0) { 1.12 } else { 0.89 }
+        $next = [Math]::Min(4.0, [Math]::Max(0.4, [double]$scale.ScaleX * $factor))
+        $scale.ScaleX = $next
+        $scale.ScaleY = $next
+        $ze.Handled = $true
+      } catch { Log-Note ("lightbox zoom: " + $_.Exception.Message) }
+    }
+    $viewer.Add_MouseWheel($zoom)
+    $root.Add_MouseWheel($zoom)
+    $viewer.Add_KeyDown({
+      param($ks, $ke)
+      try {
+        if ($ke.Key -eq [System.Windows.Input.Key]::Escape) { $viewer.Close(); $ke.Handled = $true }
+      } catch { }
+    })
+    $viewer.Content = $root
+    [void]$viewer.ShowDialog()
+  } catch { Log-Note ("lightbox error: " + $_.Exception.Message) }
+}
+
+# Burbuja de imagen clickeable (espejo/outbox y fotos que manda el usuario).
+# Carga la imagen a resolución COMPLETA para el visor: la miniatura del burbuja
+# se decodifica chica a propósito (DecodePixelWidth), y reutilizarla era lo que
+# se veía pixelado al ampliar. Sin red: outbox por la ruta local o base64 que ya
+# está en memoria.
+function Load-FullImage($descriptor) {
+  try {
+    if ($null -eq $descriptor) { return $null }
+    $kind = [string]$descriptor.kind
+    $value = [string]$descriptor.value
+    if ([string]::IsNullOrWhiteSpace($kind) -or [string]::IsNullOrWhiteSpace($value)) { return $null }
     $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
-    $bitmap.BeginInit()
-    $bitmap.StreamSource = $stream
-    $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-    $bitmap.DecodePixelWidth = 220
-    $bitmap.EndInit()
+    if ($kind -eq 'url') {
+      $bytes = $script:http.GetByteArrayAsync($value).Result
+      if ($null -eq $bytes -or $bytes.Length -eq 0) { return $null }
+      $stream = New-Object System.IO.MemoryStream(, $bytes)
+      $bitmap.BeginInit()
+      $bitmap.StreamSource = $stream
+      $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+      $bitmap.EndInit()
+    } elseif ($kind -eq 'base64') {
+      $bytes = [Convert]::FromBase64String($value)
+      $stream = New-Object System.IO.MemoryStream(, $bytes)
+      $bitmap.BeginInit()
+      $bitmap.StreamSource = $stream
+      $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+      $bitmap.EndInit()
+    } elseif ($kind -eq 'file') {
+      $bitmap.BeginInit()
+      $bitmap.UriSource = New-Object System.Uri($value)
+      $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+      $bitmap.EndInit()
+    } else {
+      return $null
+    }
     $bitmap.Freeze()
+    return $bitmap
+  } catch {
+    Log-Note ("lightbox full image: " + $_.Exception.Message)
+    return $null
+  }
+}
+
+function Add-ChatImageBubble([System.Windows.Media.ImageSource]$source, [string]$caption, [string]$who, $descriptor = $null) {
+  try {
+    if ($null -eq $source -or $null -eq $script:chatStack) { return }
     $img = New-Object System.Windows.Controls.Image
-    $img.Source = $bitmap
+    $img.Source = $source
     $img.Stretch = [System.Windows.Media.Stretch]::Uniform
     $img.MaxWidth = 220
     $img.MaxHeight = 220
+    $img.Cursor = [System.Windows.Input.Cursors]::Hand
+    $img.ToolTip = 'Clic para ver en grande'
+    $img.Tag = $descriptor
+    $img.Add_MouseLeftButtonUp({
+      param($is, $ie)
+      try {
+        $ie.Handled = $true
+        $fullImage = $null
+        if ($null -ne $is.Tag) { $fullImage = Load-FullImage $is.Tag }
+        if ($null -eq $fullImage) { $fullImage = $is.Source }
+        Show-ImageLightbox $fullImage
+      } catch { Log-Note ("lightbox open: " + $_.Exception.Message) }
+    })
     $panel = New-Object System.Windows.Controls.StackPanel
     [void]$panel.Children.Add($img)
-    if (-not [string]::IsNullOrWhiteSpace($caption) -and $caption -ne '📷 Foto enviada por Telegram') {
+    if (-not [string]::IsNullOrWhiteSpace($caption) -and $caption -notmatch 'Foto enviada por Telegram') {
       $captionText = New-Object System.Windows.Controls.TextBlock
       $captionText.Text = $caption
       $captionText.TextWrapping = [System.Windows.TextWrapping]::Wrap
@@ -647,6 +817,24 @@ function Add-HistoryImage([string]$url, [string]$caption, [string]$who) {
     $border.Child = $panel
     [void]$script:chatStack.Children.Add($border)
     $script:chatScroll.ScrollToEnd()
+  } catch { Log-Note ("chat image bubble: " + $_.Exception.Message) }
+}
+
+function Add-HistoryImage([string]$url, [string]$caption, [string]$who) {
+  try {
+    if ($null -eq $script:chatStack -or [string]::IsNullOrWhiteSpace($url)) { return }
+    $fullUrl = if ($url.StartsWith('http')) { $url } else { $script:baseUrl + $url }
+    $bytes = $script:http.GetByteArrayAsync($fullUrl).Result
+    if ($null -eq $bytes -or $bytes.Length -eq 0) { return }
+    $stream = New-Object System.IO.MemoryStream(, $bytes)
+    $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
+    $bitmap.BeginInit()
+    $bitmap.StreamSource = $stream
+    $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $bitmap.DecodePixelWidth = 260
+    $bitmap.EndInit()
+    $bitmap.Freeze()
+    Add-ChatImageBubble $bitmap $caption $who @{ kind = 'url'; value = $fullUrl }
   } catch { Log-Note ("history image error: " + $_.Exception.Message) }
 }
 
@@ -689,10 +877,24 @@ function Send-Chat([string]$text) {
     if ($images.Count -gt 0) { $label = $label + "`n📎 " + $images.Count + " imagen(es)" }
     Show-ChatWindow
     Add-ChatLine $label 'user'
+    foreach ($imageEntry in $images) {
+      try {
+        $imageBytes = [Convert]::FromBase64String([string]$imageEntry.dataBase64)
+        $imageStream = New-Object System.IO.MemoryStream(, $imageBytes)
+        $imageSource = New-Object System.Windows.Media.Imaging.BitmapImage
+        $imageSource.BeginInit()
+        $imageSource.StreamSource = $imageStream
+        $imageSource.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $imageSource.DecodePixelWidth = 260
+        $imageSource.EndInit()
+        $imageSource.Freeze()
+        Add-ChatImageBubble $imageSource ([string]$imageEntry.name) 'user' @{ kind = 'base64'; value = [string]$imageEntry.dataBase64 }
+      } catch { Log-Note ("chat image local: " + $_.Exception.Message) }
+    }
     $script:windowTurn = $true
     $script:tgReplyTo = 0
     $telegramText = if ([string]::IsNullOrWhiteSpace($text)) { '[imagen]' } else { $text }
-    $script:tgUserTask = Send-Telegram ('🖥️ Dario (ventana): ' + $telegramText)
+    $script:tgUserTask = Send-Telegram ('🖥️ Ventana: ' + $telegramText)
     Set-ChanState 'pensando' $false
     Add-Typing
     Show-Bubble 'Déjame pensar…'
@@ -815,6 +1017,30 @@ $script:sync.Add_Tick({
 })
 $script:sync.Start()
 
+# --- estado de ánimo automático: poll ligero al host (~2.5 s) ----------------
+$script:moodPoll = New-Object System.Windows.Threading.DispatcherTimer
+$script:moodPoll.Interval = [TimeSpan]::FromMilliseconds(2500)
+$script:moodPoll.Add_Tick({
+  try {
+    if ((Get-Date) -lt $script:moodManualUntil) { return }
+    if ($null -ne $script:moodTask) {
+      if (-not $script:moodTask.IsCompleted) { return }
+      $moodTask = $script:moodTask
+      $script:moodTask = $null
+      $moodRaw = $moodTask.Result.Content.ReadAsStringAsync().Result
+      $moodData = $moodRaw | ConvertFrom-Json
+      if ($null -ne $moodData -and $moodData.mood) { Apply-AutoMood ([string]$moodData.mood) }
+    }
+    if ($null -eq $script:moodTask) {
+      $script:moodTask = $script:http.GetAsync(($script:baseUrl + '/whale-maid-mascot/mood'))
+    }
+  } catch {
+    Log-Note ("mood poll: " + $_.Exception.Message)
+    $script:moodTask = $null
+  }
+})
+$script:moodPoll.Start()
+
 function Show-ChatImageError([string]$message) {
   try {
     Log-Note ("chat image: " + $message)
@@ -883,6 +1109,66 @@ function Update-ChatThumbs {
     }
     $script:chatThumbsHost.Visibility = if ($script:chatImages.Count -gt 0) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
   } catch { Log-Note ("chat image thumbs: " + $_.Exception.Message) }
+}
+
+function Test-ImagePath([string]$path) {
+  try {
+    if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+    $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+    return @('.png', '.jpg', '.jpeg', '.webp', '.gif') -contains $ext
+  } catch { return $false }
+}
+
+# Ctrl+V: imágenes del portapapeles (Bitmap o lista de archivos copiada del
+# explorador). Devuelve 'image'/'files' si consumió el paste, '' para dejarlo
+# pasar como texto. Siempre deja traza en cala-window.log.
+function Paste-ChatClipboard {
+  try {
+    $formats = @()
+    try {
+      $data = [System.Windows.Clipboard]::GetDataObject()
+      if ($null -ne $data) { $formats = @($data.GetFormats()) }
+    } catch { }
+    Log-Note ("clipboard paste: formats=" + ($formats -join ','))
+
+    $hasImage = $false
+    try { $hasImage = [System.Windows.Clipboard]::ContainsImage() } catch { }
+    if ($hasImage) {
+      $image = [System.Windows.Clipboard]::GetImage()
+      if ($null -ne $image) {
+        $dir = Join-Path $env:TEMP 'cala-paste'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $file = Join-Path $dir ('pegado-' + (Get-Date -Format 'HHmmssfff') + '.png')
+        $encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+        [void]$encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($image))
+        $stream = [System.IO.File]::Create($file)
+        try { $encoder.Save($stream) } finally { $stream.Close() }
+        Log-Note ("clipboard paste: image -> " + $file + " bytes=" + (New-Object System.IO.FileInfo($file)).Length)
+        Add-ChatImage $file
+        Start-Sleep -Milliseconds 150
+        try { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } catch { }
+        return 'image'
+      }
+    }
+
+    $hasFiles = $false
+    try { $hasFiles = [System.Windows.Clipboard]::ContainsFileDropList() } catch { }
+    if ($hasFiles) {
+      $paths = @([System.Windows.Clipboard]::GetFileDropList())
+      $added = 0
+      foreach ($path in $paths) {
+        if (Test-ImagePath ([string]$path)) { Add-ChatImage ([string]$path); $added++ }
+      }
+      Log-Note ("clipboard paste: files=" + $paths.Count + " images=" + $added)
+      if ($added -gt 0) { return 'files' }
+    }
+
+    Log-Note 'clipboard paste: no image/files, letting text paste'
+    return ''
+  } catch {
+    Log-Note ("clipboard paste error: " + $_.Exception.Message)
+    return ''
+  }
 }
 
 function Add-ChatImage([string]$path) {
@@ -971,10 +1257,26 @@ function Get-ChatWindow {
     $r2.Height = New-Object System.Windows.GridLength(64)
     $rThumbs = New-Object System.Windows.Controls.RowDefinition
     $rThumbs.Height = New-Object System.Windows.GridLength(0, [System.Windows.GridUnitType]::Auto)
+    $rSplit = New-Object System.Windows.Controls.RowDefinition
+    $rSplit.Height = New-Object System.Windows.GridLength(0, [System.Windows.GridUnitType]::Auto)
+    # Altura del input recordada en ~/.dsh/whale-maid.json (chatInputHeight).
+    $initialInputHeight = 64
+    try {
+      $savedCfg = Read-Config
+      if ($null -ne $savedCfg -and $null -ne $savedCfg.chatInputHeight) { $initialInputHeight = [int]$savedCfg.chatInputHeight }
+    } catch { }
+    if ($initialInputHeight -lt 64) { $initialInputHeight = 64 }
+    if ($initialInputHeight -gt 260) { $initialInputHeight = 260 }
+    $r2.Height = New-Object System.Windows.GridLength($initialInputHeight)
+    $script:inputRow = $r2
+    $script:dragStartY = 0.0
+    $script:dragStartHeight = [double]$initialInputHeight
     [void]$layout.RowDefinitions.Add($r0)
     [void]$layout.RowDefinitions.Add($r1)
     [void]$layout.RowDefinitions.Add($rThumbs)
+    [void]$layout.RowDefinitions.Add($rSplit)
     [void]$layout.RowDefinitions.Add($r2)
+
 
     # header: nombre + subtítulo a la izquierda, cerrar a la derecha
     $header = New-Object System.Windows.Controls.Grid
@@ -1096,9 +1398,53 @@ function Get-ChatWindow {
     [System.Windows.Controls.Grid]::SetRow($thumbsBorder, 2)
     [void]$layout.Children.Add($thumbsBorder)
 
+    $resizeBar = New-Object System.Windows.Controls.Border
+    $resizeBar.Height = 10
+    $resizeBar.Margin = New-Object System.Windows.Thickness(12, 0, 12, 0)
+    $resizeBar.Background = [System.Windows.Media.Brushes]::Transparent
+    $resizeBar.Cursor = [System.Windows.Input.Cursors]::SizeNS
+    $resizeBar.ToolTip = 'Arrastrar para cambiar la altura del mensaje'
+    $grip = New-Object System.Windows.Controls.Border
+    $grip.Height = 3
+    $grip.CornerRadius = New-Object System.Windows.CornerRadius(2)
+    $grip.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(70, 148, 163, 184))
+    $grip.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $resizeBar.Child = $grip
+    $resizeBar.Add_MouseLeftButtonDown({
+      param($rs, $re)
+      try {
+        $script:dragStartY = $re.GetPosition($script:chatWin).Y
+        $script:dragStartHeight = [double]$script:inputRow.Height.Value
+        [void]$rs.CaptureMouse()
+      } catch { Log-Note ("input-resize down: " + $_.Exception.Message) }
+    })
+    $resizeBar.Add_MouseMove({
+      param($rs, $re)
+      try {
+        if (-not $rs.IsMouseCaptured) { return }
+        $dy = $re.GetPosition($script:chatWin).Y - $script:dragStartY
+        $newHeight = $script:dragStartHeight - $dy
+        if ($newHeight -lt 64) { $newHeight = 64 }
+        if ($newHeight -gt 260) { $newHeight = 260 }
+        $script:inputRow.Height = New-Object System.Windows.GridLength($newHeight)
+      } catch { Log-Note ("input-resize move: " + $_.Exception.Message) }
+    })
+    $resizeBar.Add_MouseLeftButtonUp({
+      param($rs, $re)
+      try {
+        if ($rs.IsMouseCaptured) { [void]$rs.ReleaseMouseCapture() }
+        $height = [int]$script:inputRow.Height.Value
+        Save-Config @{ chatInputHeight = $height }
+        Log-Note ("input-resize saved height=" + $height)
+      } catch { Log-Note ("input-resize up: " + $_.Exception.Message) }
+    })
+    [System.Windows.Controls.Grid]::SetRow($resizeBar, 3)
+    [void]$layout.Children.Add($resizeBar)
+
     $inputShell.Child = $inputGrid
-    [System.Windows.Controls.Grid]::SetRow($inputShell, 3)
+    [System.Windows.Controls.Grid]::SetRow($inputShell, 4)
     [void]$layout.Children.Add($inputShell)
+
 
     $send.Add_Click({ param($s, $e) try { $value = $script:chatBox.Text; $script:chatBox.Text = ''; Send-Chat $value; $script:chatBox.Focus() } catch { Log-Note ("chat send click: " + $_.Exception.Message) } })
     $attach.Add_Click({ param($s, $e) try { Pick-ChatImage } catch { Log-Note ("chat attach: " + $_.Exception.Message) } })
@@ -1107,6 +1453,16 @@ function Get-ChatWindow {
       try {
         $key = $e.Key
         if ($key -eq [System.Windows.Input.Key]::System) { $key = $e.SystemKey }
+        $ctrlDown = [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftCtrl) -or [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightCtrl)
+        if ($ctrlDown -and $key -eq [System.Windows.Input.Key]::V) {
+          $pasteResult = Paste-ChatClipboard
+          if ($pasteResult -ne '') {
+            Log-Note ("chat-key: paste-detected handled=" + $pasteResult)
+            $e.Handled = $true
+            return
+          }
+          Log-Note 'chat-key: paste-detected handled=text'
+        }
         if ($key -eq [System.Windows.Input.Key]::Enter -or $key -eq [System.Windows.Input.Key]::Return) {
           $mods = [System.Windows.Input.Keyboard]::Modifiers
           $shift = [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftShift) -or [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightShift)
@@ -1145,6 +1501,29 @@ function Get-ChatWindow {
         Log-Note ("chat-key error: " + $_.Exception.Message)
       }
     })
+    try {
+      $pasteHandler = [System.Windows.DataObjectPastingEventHandler]{
+        param($ps, $pe)
+        try {
+          $data = $pe.DataObject
+          $formats = @()
+          if ($null -ne $data) { $formats = @($data.GetFormats()) }
+          $hasImage = $false
+          $hasFiles = $false
+          try { $hasImage = [System.Windows.Clipboard]::ContainsImage() } catch { }
+          try { $hasFiles = [System.Windows.Clipboard]::ContainsFileDropList() } catch { }
+          Log-Note ("clipboard pasting: formats=" + ($formats -join ',') + " image=" + $hasImage + " files=" + $hasFiles)
+          if ($hasImage -or $hasFiles) {
+            $pasteResult = Paste-ChatClipboard
+            if ($pasteResult -ne '') {
+              $pe.CancelCommand()
+              $pe.Handled = $true
+            }
+          }
+        } catch { Log-Note ("clipboard pasting error: " + $_.Exception.Message) }
+      }
+      $box.AddHandler([System.Windows.DataObject]::PastingEvent, $pasteHandler, $true)
+    } catch { Log-Note ("clipboard pasting setup: " + $_.Exception.Message) }
     $box.Add_TextChanged({
       try {
         if ([string]::IsNullOrWhiteSpace($script:chatBox.Text)) { $script:chatHint.Visibility = [System.Windows.Visibility]::Visible }
@@ -1207,7 +1586,10 @@ function Get-Popup {
     $card.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(52, 255, 255, 255))
     $card.BorderThickness = New-Object System.Windows.Thickness(1)
     $card.CornerRadius = New-Object System.Windows.CornerRadius(14)
-    $card.Padding = New-Object System.Windows.Thickness(7)
+    $card.Padding = New-Object System.Windows.Thickness(4)
+    $card.Width = 200
+    $card.MinWidth = 176
+    $card.MaxWidth = 224
     $menuShadow = New-Object System.Windows.Media.Effects.DropShadowEffect
     $menuShadow.BlurRadius = 24
     $menuShadow.ShadowDepth = 6
@@ -1215,7 +1597,12 @@ function Get-Popup {
     $menuShadow.Color = [System.Windows.Media.Colors]::Black
     $card.Effect = $menuShadow
     $panel = New-Object System.Windows.Controls.StackPanel
-    $card.Child = $panel
+    $menuScroll = New-Object System.Windows.Controls.ScrollViewer
+    $menuScroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+    $menuScroll.HorizontalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Disabled
+    $menuScroll.MaxHeight = 420
+    $menuScroll.Content = $panel
+    $card.Child = $menuScroll
     $popup.Child = $card
     $script:menuPopup = $popup
     $script:menuPanel = $panel

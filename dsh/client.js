@@ -47,6 +47,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         angry: 'back', sad: 'back',
       }
       var POSES_MANIFEST_URL = '/whale-maid-mascot/poses.json'
+      var MOOD_URL = '/whale-maid-mascot/mood'
       var CHAT_URL = '/whale-maid-mascot/chat'
       var DRAW_URL = '/whale-maid-mascot/draw'
       var MEMORY_URL = '/whale-maid-mascot/memory'
@@ -229,6 +230,9 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       var poseManifest = null
       var moodTimer = null
       var currentMood = 'neutral'
+      // Mood automation (host-derived from the real session activity).
+      var remoteMoodImage = ''
+      var remoteMoodPoll = null
       var chatOpenedOnce = false
       var feedSessionId = null
       var feedArmedAction = null
@@ -3228,7 +3232,38 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         clearTimeout(moodTimer)
         moodTimer = null
         currentMood = 'neutral'
-        if (img) img.src = STYLE_ASSETS[style] || ASSET_A
+        if (img) img.src = remoteMoodImage || STYLE_ASSETS[style] || ASSET_A
+      }
+
+      // --- remote mood (derived by the host from the real session activity) ---
+      function applyRemoteMood(data) {
+        try {
+          if (!img || !data || typeof data.mood !== 'string') return
+          if (typeof data.image !== 'string' || !data.image) return
+          if (data.mood === 'base') {
+            if (remoteMoodImage === '') return
+            remoteMoodImage = ''
+            if (!moodTimer) img.src = STYLE_ASSETS[style] || ASSET_A
+            return
+          }
+          if (data.image === remoteMoodImage) return
+          remoteMoodImage = data.image
+          if (moodTimer) return
+          img.src = remoteMoodImage
+        } catch (e) {}
+      }
+
+      function startMoodPoll() {
+        if (remoteMoodPoll) return
+        remoteMoodPoll = setInterval(function () {
+          try {
+            if (document.hidden) return
+            fetch(MOOD_URL, { headers: { accept: 'application/json' } })
+              .then(function (res) { return res.ok ? res.json() : null })
+              .then(applyRemoteMood)
+              .catch(function () {})
+          } catch (e) {}
+        }, 2500)
       }
 
       var MOOD_EMOJI = {
@@ -3921,6 +3956,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         moodTimer = null
         currentMood = 'neutral'
         img.src = STYLE_ASSETS[style] || ASSET_A
+        if (remoteMoodImage) img.src = remoteMoodImage
         if (style === 'c') {
           img.style.height = 'auto'
           img.style.width = '140px'
@@ -4581,7 +4617,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         } catch (e) {}
       }
 
-      function apply(ctx) {
+      function applyInner(ctx) {
         adoptServices(ctx)
         notifEnabled = readNotifEnabled()
         setupExplainCleanupWatch()
@@ -4606,6 +4642,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           placeInitial()
           setStyle(readStyle(), false)
           loadPoseManifest()
+          startMoodPoll()
           if (isHidden()) {
             root.style.display = 'none'
             restoreBtn.style.display = 'block'
@@ -4652,8 +4689,45 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         }
       }
 
+      // El entry SIEMPRE tiene que quedar `active`: si `apply` lanza, DSH marca
+      // el fiber como `failed` y aborta TODO el arranque de la app
+      // ("web boot: 1 entry did not activate — dsh-whale-maid-mascot: failed").
+      // La mascota en página es contenido opcional: si falla, se cae sola y se
+      // anota en consola, pero el resto de DSH (chat, ventana, Telegram) sigue.
+      function apply(ctx) {
+        try {
+          applyInner(ctx)
+        } catch (error) {
+          try {
+            console.error('[whale-maid-mascot] apply falló; mascota en página desactivada:', error)
+          } catch (e) {}
+        }
+      }
+
       exports.apply = apply
-      exports.inject = ['workspaces', 'sessions', 'slots', 'uiWorkspace']
+      // ---------------------------------------------------------------------
+      // BLINDAJE DE ARRANQUE — no reemplazar por una lista de servicios.
+      //
+      // El web boot de DSH recorre los entries de cliente y aborta TODA la app
+      // por el primero que no quede `active`:
+      //   "web boot: 1 entry did not activate — dsh-whale-maid-mascot: failed"
+      // Un `inject` con servicios duros (workspaces, sessions, slots,
+      // uiWorkspace) deja el fiber en `loading`/`failed` y DSH no abre.
+      // Los servicios se resuelven de forma defensiva con adoptServices(ctx) /
+      // serviceOf(), y las superficies con un scope hijo.
+      //
+      // El getter de abajo hace que cualquier `exports.inject = [...]` que se
+      // agregue en este archivo (antes o después de esta línea) no tenga efecto.
+      // ---------------------------------------------------------------------
+      exports.inject = []
+      try {
+        Object.defineProperty(exports, 'inject', {
+          get: function () { return [] },
+          set: function () {},
+          enumerable: true,
+          configurable: true,
+        })
+      } catch (e) {}
       return module.exports
     },
   })

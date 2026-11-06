@@ -44,6 +44,11 @@ export const DEFAULTS = {
   // normal harness GUI; 'fullscreen' registers her own global panel (the
   // harness' public client-plugin surface) and starts there. Default classic.
   interfaceMode: 'classic',
+  // Mood automation: the desktop/in-page image follows the REAL activity of the
+  // shared session (see dsh/mood.js). Idle threshold and anti-flicker hold; the
+  // rest of the thresholds have their own defaults in that module.
+  moodIdleMinutes: 6,
+  moodMinHoldMs: 9000,
   // Desktop companion: a frameless, transparent, always-on-top window that
   // renders only her sprite (plus a speech bubble) on the monitor, so she is
   // visible while the harness runs behind the scenes. Opt-in: false by default.

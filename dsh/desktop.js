@@ -45,6 +45,23 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+// Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI: the emoji and accents in
+// the window script become mojibake and the parser dies *before* the window
+// opens ("Token 'Z' inesperado"), which surfaces only as `window closed (exit 1)`.
+// The script is maintained as UTF-8, so restore the BOM before spawning it.
+function ensureUtf8Bom(file) {
+  try {
+    const bytes = readFileSync(file)
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return false
+    writeFileSync(file, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]))
+    log(`BOM restaurado en ${file}`)
+    return true
+  } catch (error) {
+    log(`BOM check failed: ${error && error.message ? error.message : String(error)}`)
+    return false
+  }
+}
+
 function running() {
   return Boolean(child && child.exitCode === null)
 }
@@ -96,6 +113,7 @@ export async function openDesktopWindow() {
   try {
     if (running()) return { ok: true, open: true, reused: true }
     if (!existsSync(WINDOW_SCRIPT)) return { ok: false, error: 'desktop-window.ps1 no encontrado' }
+    ensureUtf8Bom(WINDOW_SCRIPT)
     const config = loadConfig()
     const spriteKey = typeof config.desktopSprite === 'string' && SPRITES[config.desktopSprite] ? config.desktopSprite : 'a'
     const spritePath = fileURLToPath(new URL(SPRITES[spriteKey], ASSETS))
@@ -117,8 +135,16 @@ export async function openDesktopWindow() {
       configPath(),
     ]
     if (config.desktopAlwaysOnTop === false) args.push('-NoTopMost')
-    child = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore' })
+    child = spawn('powershell.exe', args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
     const spawned = child
+    let stderr = ''
+    try {
+      spawned.stderr?.on('data', (chunk) => {
+        stderr = (stderr + chunk.toString()).slice(-4000)
+      })
+    } catch {
+      /* diagnostics are best effort */
+    }
     spawned.on('exit', (code) => {
       if (child === spawned) child = null
       try {
@@ -126,7 +152,8 @@ export async function openDesktopWindow() {
       } catch {
         /* best effort */
       }
-      log(`window closed (exit ${String(code)})`)
+      const detail = code && stderr.trim() ? ` stderr: ${stderr.trim().slice(-1200)}` : ''
+      log(`window closed (exit ${String(code)})${detail}`)
     })
     spawned.on('error', (error) => {
       if (child === spawned) child = null

@@ -8,3 +8,4 @@ asar-out/
 .DS_Store
 Thumbs.db
 *.log
+_backups/
