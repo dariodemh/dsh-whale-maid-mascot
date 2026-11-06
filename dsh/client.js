@@ -4475,16 +4475,10 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         else if (typeof ctx.get === 'function') {
           try { interfaceLayout = ctx.get('layout') || null } catch (e) {}
         }
-        if (!interfaceLayout && typeof ctx.inject === 'function') {
-          try {
-            ctx.inject(['layout'], function (sub) {
-              try {
-                interfaceLayout = sub.layout || (typeof sub.get === 'function' ? sub.get('layout') : null) || interfaceLayout
-              } catch (e) {}
-              refreshInterfaceSurface()
-            })
-          } catch (e) {}
-        }
+        // Never call ctx.inject('layout') here: in the web boot an unresolved
+        // injected service leaves the plugin entry stuck in `loading`, which
+        // aborts the whole app start ("1 entry did not activate"). Layout must
+        // stay fully optional, so it is only used when already present.
         if (!ctx.slots || typeof ctx.slots.inject !== 'function' || !React) return
         try {
           ctx.slots.inject('main', function () {
