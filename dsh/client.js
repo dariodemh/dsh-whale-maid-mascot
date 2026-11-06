@@ -847,6 +847,18 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         menuEl.appendChild(autoDrawBtn)
         menuEl.appendChild(progressBtn)
         menuEl.appendChild(memoryBtn)
+        var interfaceSep = document.createElement('div')
+        interfaceSep.className = 'wm-menu-sep'
+        var interfaceBtn = document.createElement('button')
+        interfaceBtn.type = 'button'
+        interfaceBtn.className = 'wm-menu-item'
+        interfaceBtn.textContent = interfaceMode === 'fullscreen' ? 'Volver al modo clÃ¡sico' : 'Pantalla completa'
+        interfaceBtn.addEventListener('click', function () {
+          hideContextMenu()
+          toggleInterfaceMode()
+        })
+        menuEl.appendChild(interfaceSep)
+        menuEl.appendChild(interfaceBtn)
       }
 
       function renderMemoryMenu() {
@@ -4266,6 +4278,274 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         )
       }
 
+      // ---------------------------------------------------------------------
+      // Interface mode: classic (corner mascot) vs fullscreen (mascot surface).
+      //
+      // Public contract used (documented in @deepseek-ai/dsh-client-ui-layout):
+      //   - ctx.slots.inject('main', ...) + ctx.slots.register({ name: 'main',
+      //     key: <id> }) registers a *global panel*, the official view a client
+      //     plugin can own. `ctx.layout.selectPanel(id | null)` switches the
+      //     center column to it (null = the Conversation) and
+      //     `ctx.layout.toggleSidebar()` collapses/restores the sidebar.
+      //   - No chat/session logic is reimplemented: the panel reuses the very
+      //     same .wm-root (mascot) and .wm-chat nodes the plugin already builds,
+      //     moving only those nodes into the surface.
+      // If the harness does not expose slots/layout (older build), the mode
+      // degrades to a plugin-scoped fixed overlay appended to <body>.
+      var INTERFACE_URL = '/whale-maid-mascot/interface'
+      var INTERFACE_PANEL_ID = 'whale-maid'
+      var interfaceMode = 'classic'
+      var interfaceCtx = null
+      var interfaceLayout = null
+      var interfacePanelRegistered = false
+      var interfaceHostEl = null
+      var interfaceStageEl = null
+      var interfaceFallback = false
+      var interfaceMounted = false
+      var interfaceChatWasOpen = false
+      var interfaceSidebarWasCollapsed = false
+      var interfacePersonaName = 'Whale-chan'
+      var interfaceSavedRootCss = ''
+      var interfaceSavedChatCss = ''
+
+      function injectInterfaceStyles() {
+        if (document.querySelector('style[data-whale-maid-interface]')) return
+        var style = document.createElement('style')
+        style.setAttribute('data-whale-maid-interface', '1')
+        style.textContent = [
+          'html[data-whm-interface="fullscreen"] .wm-surface-host{position:absolute;inset:0;z-index:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1e293b);overflow:hidden;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-host.wm-surface-fallback{position:fixed;z-index:2147483200;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-head{flex:none;height:46px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--dsw-alias-border-l3,#e2e8f0);-webkit-app-region:drag;font:13px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-head .t{font-weight:600;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-head .s{opacity:.6;font-size:12px;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-head .wm-surface-exit{margin-left:auto;-webkit-app-region:no-drag;border:1px solid var(--dsw-alias-border-l3,#cbd5e1);background:transparent;color:inherit;border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-head .wm-surface-exit:hover{background:var(--dsw-alias-bg-mask-1,rgba(15,23,42,.06));}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-stage{position:relative;flex:1;min-height:0;display:flex;overflow:hidden;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-stage>.wm-chat{position:relative!important;left:auto!important;top:auto!important;right:auto!important;bottom:auto!important;width:100%!important;max-width:none!important;height:100%!important;max-height:none!important;margin:0!important;transform:none!important;border-radius:0!important;border:none!important;box-shadow:none!important;display:flex!important;opacity:1!important;z-index:1!important;}',
+          'html[data-whm-interface="fullscreen"] .wm-surface-stage>.wm-root{position:absolute!important;left:auto!important;top:auto!important;right:18px!important;bottom:0!important;transform:none!important;z-index:2!important;}',
+        ].join('')
+        document.head.appendChild(style)
+      }
+
+      function interfaceFrame() {
+        var layer = document.querySelector('[data-shell-overlay]')
+        return layer ? layer.parentElement : null
+      }
+
+      function collapseSidebarForInterface() {
+        var frame = interfaceFrame()
+        interfaceSidebarWasCollapsed = !!(frame && frame.hasAttribute('data-sidebar-collapsed'))
+        if (interfaceSidebarWasCollapsed) return
+        if (interfaceLayout && typeof interfaceLayout.toggleSidebar === 'function') {
+          try { interfaceLayout.toggleSidebar() } catch (e) {}
+        }
+      }
+
+      function restoreSidebarForInterface() {
+        if (interfaceSidebarWasCollapsed) return
+        var frame = interfaceFrame()
+        if (!frame || !frame.hasAttribute('data-sidebar-collapsed')) return
+        if (interfaceLayout && typeof interfaceLayout.toggleSidebar === 'function') {
+          try { interfaceLayout.toggleSidebar() } catch (e) {}
+        }
+      }
+
+      function buildSurfaceChrome(host) {
+        var head = document.createElement('div')
+        head.className = 'wm-surface-head'
+        var who = document.createElement('div')
+        who.textContent = 'ðŸ›'
+        var title = document.createElement('div')
+        title.className = 't'
+        title.textContent = interfacePersonaName
+        var sub = document.createElement('div')
+        sub.className = 's'
+        sub.textContent = 'DeepSeek Harness Â· sesiones y herramientas por detrÃ¡s'
+        var back = document.createElement('button')
+        back.type = 'button'
+        back.className = 'wm-surface-exit'
+        back.textContent = 'Modo clÃ¡sico'
+        back.addEventListener('click', function () { setInterfaceMode(interfaceCtx, 'classic') })
+        head.appendChild(who)
+        head.appendChild(title)
+        head.appendChild(sub)
+        head.appendChild(back)
+        var stage = document.createElement('div')
+        stage.className = 'wm-surface-stage'
+        host.appendChild(head)
+        host.appendChild(stage)
+        return stage
+      }
+
+      function mountSurface(host, fallback) {
+        if (!host || !root || !chatPanelEl) return
+        if (interfaceMounted) unmountSurface()
+        if (interfaceFallback) {
+          try { if (interfaceHostEl) interfaceHostEl.remove() } catch (e) {}
+        }
+        interfaceHostEl = host
+        interfaceFallback = !!fallback
+        host.classList.add('wm-surface-host')
+        if (fallback) host.classList.add('wm-surface-fallback')
+        interfaceStageEl = buildSurfaceChrome(host)
+        injectInterfaceStyles()
+        interfaceSavedRootCss = root.style.cssText || ''
+        interfaceSavedChatCss = chatPanelEl.style.cssText || ''
+        interfaceChatWasOpen = chatPanelEl.classList.contains('open')
+        interfaceStageEl.appendChild(root)
+        interfaceStageEl.appendChild(chatPanelEl)
+        document.documentElement.setAttribute('data-whm-interface', 'fullscreen')
+        if (!interfaceChatWasOpen) openChat()
+        interfaceMounted = true
+      }
+
+      function unmountSurface() {
+        if (!interfaceMounted) return
+        document.documentElement.removeAttribute('data-whm-interface')
+        try {
+          if (root) {
+            root.style.cssText = interfaceSavedRootCss
+            document.body.appendChild(root)
+          }
+        } catch (e) {}
+        try {
+          if (chatPanelEl) {
+            chatPanelEl.style.cssText = interfaceSavedChatCss
+            document.body.appendChild(chatPanelEl)
+          }
+        } catch (e) {}
+        if (!interfaceChatWasOpen) {
+          try { closeChat() } catch (e) {}
+        }
+        if (interfaceFallback && interfaceHostEl) {
+          try { interfaceHostEl.remove() } catch (e) {}
+        }
+        interfaceHostEl = null
+        interfaceStageEl = null
+        interfaceFallback = false
+        interfaceMounted = false
+      }
+
+      function mountFallbackSurface() {
+        if (!root || !chatPanelEl) return
+        var host = document.createElement('div')
+        document.body.appendChild(host)
+        mountSurface(host, true)
+      }
+
+      function InterfacePanel() {
+        var hostRef = React.useRef(null)
+        React.useEffect(function () {
+          var host = hostRef.current
+          if (host) mountSurface(host, false)
+          return function () { unmountSurface() }
+        }, [])
+        return React.createElement('div', { className: 'wm-surface-host' })
+      }
+
+      function selectInterfacePanel() {
+        if (!interfaceLayout || !interfacePanelRegistered) return false
+        if (typeof interfaceLayout.selectPanel !== 'function') return false
+        try {
+          interfaceLayout.selectPanel(INTERFACE_PANEL_ID)
+          return true
+        } catch (e) {
+          return false
+        }
+      }
+
+      /** Enters/refreshes the fullscreen surface using the panel when available. */
+      function refreshInterfaceSurface() {
+        if (interfaceMode !== 'fullscreen') return
+        if (interfaceMounted && !interfaceFallback) return
+        if (selectInterfacePanel()) {
+          if (interfaceMounted && interfaceFallback) unmountSurface()
+          collapseSidebarForInterface()
+        } else if (!interfaceMounted) {
+          mountFallbackSurface()
+        }
+      }
+
+      function registerInterfaceSurface(ctx) {
+        if (!ctx) return
+        interfaceCtx = ctx
+        // `layout` is optional on purpose: it is injected softly, never listed in
+        // exports.inject, so a build without that service cannot stall the plugin.
+        if (ctx.layout) interfaceLayout = ctx.layout
+        else if (typeof ctx.get === 'function') {
+          try { interfaceLayout = ctx.get('layout') || null } catch (e) {}
+        }
+        if (!interfaceLayout && typeof ctx.inject === 'function') {
+          try {
+            ctx.inject(['layout'], function (sub) {
+              try {
+                interfaceLayout = sub.layout || (typeof sub.get === 'function' ? sub.get('layout') : null) || interfaceLayout
+              } catch (e) {}
+              refreshInterfaceSurface()
+            })
+          } catch (e) {}
+        }
+        if (!ctx.slots || typeof ctx.slots.inject !== 'function' || !React) return
+        try {
+          ctx.slots.inject('main', function () {
+            var dispose = ctx.slots.register({ name: 'main', key: INTERFACE_PANEL_ID, order: 50 }, InterfacePanel)
+            interfacePanelRegistered = true
+            refreshInterfaceSurface()
+            return dispose
+          })
+        } catch (e) {
+          console.warn('[whale-maid-mascot] interface panel skipped:', e && e.message)
+        }
+      }
+
+      function setInterfaceMode(ctx, mode) {
+        if (ctx) interfaceCtx = ctx
+        var next = mode === 'fullscreen' ? 'fullscreen' : 'classic'
+        if (next === interfaceMode) {
+          if (next === 'fullscreen') refreshInterfaceSurface()
+          return
+        }
+        interfaceMode = next
+        if (next === 'fullscreen') {
+          injectInterfaceStyles()
+          refreshInterfaceSurface()
+          if (interfaceLayout && typeof interfaceLayout.closeRightbar === 'function') {
+            try { interfaceLayout.closeRightbar() } catch (e) {}
+          }
+          try { say('Pantalla completa. Volver: menÃº â†’ Modo clÃ¡sico.') } catch (e) {}
+        } else {
+          if (interfaceMounted && !interfaceFallback) {
+            if (!interfaceLayout) unmountSurface()
+            else {
+              try { interfaceLayout.selectPanel(null) } catch (e) { unmountSurface() }
+            }
+          } else {
+            unmountSurface()
+          }
+          restoreSidebarForInterface()
+          try { say('Modo clÃ¡sico.') } catch (e) {}
+        }
+      }
+
+      function toggleInterfaceMode() {
+        setInterfaceMode(interfaceCtx, interfaceMode === 'fullscreen' ? 'classic' : 'fullscreen')
+      }
+
+      function initInterfaceMode(ctx) {
+        if (!ctx) return
+        interfaceCtx = ctx
+        var applyMode = function (data) {
+          if (data && typeof data.personaName === 'string' && data.personaName) interfacePersonaName = data.personaName
+          if (data && data.mode === 'fullscreen') setInterfaceMode(ctx, 'fullscreen')
+        }
+        try {
+          fetch(INTERFACE_URL, { credentials: 'same-origin' })
+            .then(function (response) { return response && response.ok ? response.json() : null })
+            .then(applyMode)
+            .catch(function () {})
+        } catch (e) {}
+      }
+
       function apply(ctx) {
         adoptServices(ctx)
         notifEnabled = readNotifEnabled()
@@ -4281,6 +4561,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
             }, PromptSettingsSection)
           })
         }
+        registerInterfaceSurface(ctx)
         ready(function () {
           injectStyles()
           buildDom()
@@ -4325,6 +4606,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           startWorkspaceWatch()
           // Small hook so browser tests can force a workspace poll without waiting.
           try { window.__whaleMaidPollWorkspace = function (opts) { return pollWorkspace(opts) } } catch (e) {}
+          initInterfaceMode(ctx)
         })
         if (typeof ctx.effect === 'function') {
           ctx.effect(function () {

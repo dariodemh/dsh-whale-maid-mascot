@@ -40,6 +40,10 @@ export const DEFAULTS = {
   tokenFile: TOKEN_FILE,
   allowPairing: true,
   streamReplies: true,
+  // Which face the mascot opens with: 'classic' keeps the corner pet over the
+  // normal harness GUI; 'fullscreen' registers her own global panel (the
+  // harness' public client-plugin surface) and starts there. Default classic.
+  interfaceMode: 'classic',
   pollTimeoutSeconds: 50,
   turnTimeoutMs: 15 * 60 * 1000,
   maxReplyChars: 3800,
@@ -50,11 +54,27 @@ export const DEFAULTS = {
   // queues behind a heavy agent turn. Set to false to use the shared session.
   lightChat: true,
   lightSessionSuffix: '-chat',
-  // Proactive review: every few minutes the mascot looks around and decides
-  // whether writing to the owner is worth it. `SKIP` replies stay silent.
+  // Proactive review: she looks around on her own, at most once an hour (that is
+  // the floor, not just the default), and decides whether writing to the owner
+  // is worth it. `SKIP` replies stay silent and still start the cooldown, so the
+  // same empty review is never repeated minutes later.
   reviewEnabled: true,
-  reviewEveryMs: 3 * 60 * 1000,
-  reviewCooldownMs: 15 * 60 * 1000,
+  reviewEveryMs: 60 * 60 * 1000,
+  reviewCooldownMs: 60 * 60 * 1000,
+  // Do not review while the owner has been active in the shared session during
+  // the last 10 minutes: a review that lands on top of a live conversation is
+  // exactly what crosses messages. Configurable, not hard-coded.
+  reviewActivityGuardMs: 10 * 60 * 1000,
+  // After a review that wrote nothing (`SKIP`, empty reply, error or timeout)
+  // wait this long before spending another turn; also after a sent message the
+  // fingerprint is kept for `reviewDedupeMs` so nothing repeats unchanged.
+  reviewSkipCooldownMs: 60 * 60 * 1000,
+  reviewDedupeMs: 30 * 60 * 1000,
+  // Hard budget for one review: a single model call, no tools, and a cap on
+  // how much it may produce/think before the turn is aborted and treated as SKIP.
+  reviewTimeoutMs: 60 * 1000,
+  reviewMaxSteps: 2,
+  reviewMaxTokens: 260,
   reviewSessionSuffix: '-review',
   reviewRecentFilesMinutes: 30,
 }
@@ -91,6 +111,11 @@ export function loadConfig() {
 
 export function configPath() {
   return CONFIG_FILE
+}
+
+/** 'fullscreen' only when explicitly configured; anything else is 'classic'. */
+export function interfaceModeOf(config) {
+  return config?.interfaceMode === 'fullscreen' ? 'fullscreen' : 'classic'
 }
 
 export function loadState() {

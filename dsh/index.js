@@ -31,7 +31,7 @@ import {
   validUserId,
 } from './memory.js'
 import { askSession, historyJson, promptParts, sharedTranscript } from './session.js'
-import { lightSessionId, loadConfig, loadState, personaBody } from './config.js'
+import { interfaceModeOf, lightSessionId, loadConfig, loadState, personaBody } from './config.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -235,6 +235,10 @@ async function admitChatImages(scope, images) {
 // every resolved path must stay inside the requested workspace.
 const WORKSPACE_ROUTE = '/whale-maid-mascot/workspace'
 const WORKSPACE_FILE_ROUTE = '/whale-maid-mascot/workspace/file'
+// Which face the browser should open with. The client plugin reads it on load;
+// the mode itself is configured host-side so it survives a browser reload and
+// applies to every browser that opens this harness.
+const INTERFACE_ROUTE = '/whale-maid-mascot/interface'
 const IGNORED_DIRS = new Set([
   'node_modules', '.git', '.pnpm-store', '.cache', '.next', '.nuxt', '.venv', 'venv',
   '__pycache__', 'dist', 'build', 'out', 'tmp', 'temp', '.idea', '.vscode', '.dsh',
@@ -1127,6 +1131,19 @@ async function handleSharedHistory(req, res) {
     sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
   }
 }
+/** GET /whale-maid-mascot/interface: the face the browser should open with. */
+export function handleInterface(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  const config = loadConfig()
+  sendJson(res, 200, {
+    mode: interfaceModeOf(config),
+    personaName: typeof config.personaName === 'string' && config.personaName ? config.personaName : 'Whale-chan',
+  })
+}
+
 export function apply(ctx, config = {}) {
   if (typeof ctx.inject !== 'function') return
 
@@ -1187,6 +1204,12 @@ export function apply(ctx, config = {}) {
         kind: 'exact',
         path: '/whale-maid-mascot/history',
         handler: (req, res) => handleSharedHistory(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-interface',
+        kind: 'exact',
+        path: INTERFACE_ROUTE,
+        handler: (req, res) => handleInterface(req, res),
       })
     } catch (error) {
       console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)

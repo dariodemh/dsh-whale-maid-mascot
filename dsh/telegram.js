@@ -8,20 +8,24 @@
  * (or the TELEGRAM_BOT_TOKEN env var), restart DSH, then send `/pair <code>`
  * with the code from `~/.dsh/whale-maid.pairing.txt`.
  */
-import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import {
+  DSH_HOME,
   chunkText,
   loadConfig,
   loadState,
+  personaText,
   reviewSessionId,
   readMascotMemory,
   rememberInMascot,
   resolveToken,
   saveState,
+  sharedSessionId,
 } from './config.js'
-import { askSession, ensureSession, sharedTranscript } from './session.js'
+import { askSession, ensureSession, isSessionBusy, sessionSnapshot, sharedTranscript } from './session.js'
+import { decideReview, isReviewSkip, reviewConfig, reviewPrompt, reviewReply, reviewSystem } from './review.js'
 import { TelegramBot } from './telegram-api.js'
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.pnpm-store', 'dist', 'build', 'coverage'])
@@ -65,7 +69,7 @@ function recentWorkspaceFiles(root, minutes, limit = 10) {
 export const name = 'whale-maid-telegram'
 export const inject = []
 
-class WhaleTelegram {
+export class WhaleTelegram {
   constructor(scope, rowConfig) {
     this.scope = scope
     this.config = { ...loadConfig(), ...(rowConfig ?? {}) }
@@ -94,6 +98,8 @@ class WhaleTelegram {
     this.reviewBusy = false
     this.lastReviewAt = 0
     this.lastReviewFingerprint = ''
+    this.lastProbeAt = 0
+    this.lastOutcome = ''
     this.lastProactiveAt = 0
   }
 
@@ -164,72 +170,155 @@ class WhaleTelegram {
   // Every few minutes the mascot looks around — the main conversation and the
   // files touched recently — and decides on her own whether writing is worth it.
   // The turn runs in a light review session, so it never blocks the chat.
+  // --- proactive review ------------------------------------------------------
+  // Every few minutes the mascot looks around — the main conversation and the
+  // files touched recently — and decides on her own whether writing is worth it.
+  // Since 2.7.0 the decision is ONE tool-less model call: no agent turn, no
+  // shell, no file tools, so a review can never splice a turn into the
+  // conversation the owner is having in another surface. Every tick is logged
+  // to ~/.dsh/whale-maid.log so the behaviour can be audited afterwards.
   startReview() {
     if (this.config.reviewEnabled === false) return
-    const every = Math.max(60000, Number(this.config.reviewEveryMs) || 0)
-    this.reviewTimer = setInterval(() => { void this.reviewTick() }, every)
+    // Never double-schedule: a second kickoff or timer would run two ticks.
+    if (this.reviewTimer || this.reviewKickoff) return
+    const cfg = reviewConfig(this.config)
+    this.reviewTimer = setInterval(() => { void this.reviewTick('timer') }, cfg.everyMs)
     if (typeof this.reviewTimer.unref === 'function') this.reviewTimer.unref()
-    this.reviewKickoff = setTimeout(() => { void this.reviewTick() }, 60 * 1000)
+    this.reviewKickoff = setTimeout(() => {
+      this.reviewKickoff = null
+      if (this.stopped) return
+      // A tick already ran while this was pending: do not double-fire.
+      if (this.lastReviewAt && Date.now() - this.lastReviewAt < 60 * 1000) {
+        this.reviewLog('tick trigger=kickoff decision=skip reason=recent-review')
+        return
+      }
+      void this.reviewTick('kickoff')
+    }, 60 * 1000)
     if (typeof this.reviewKickoff.unref === 'function') this.reviewKickoff.unref()
-    this.log(`revisión proactiva cada ${Math.round(every / 60000)} min`)
+    this.log(`revisión proactiva cada ${Math.round(cfg.everyMs / 60000)} min (sin herramientas, guarda de actividad ${Math.round(cfg.activityGuardMs / 60000)} min)`)
   }
 
-  reviewPrompt(digest, files) {
-    const now = new Date().toLocaleString(undefined, {
-      weekday: 'long',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-    const lines = [
-      `Sos ${this.config.personaName || 'Whale-chan'} en tu turno de revisión. Nadie te escribió: mirás alrededor y decidís si vale la pena escribirle un mensaje por Telegram, o quedarte callada.`,
-      `Ahora es: ${now}.`,
-    ]
-    if (digest) lines.push('', 'Último tramo de la conversación principal:', digest)
-    if (files.length > 0) lines.push('', 'Archivos tocados hace poco:', ...files.map(file => `- ${file}`))
-    lines.push(
-      '',
-      'Podés usar tus herramientas (shell, archivos, búsqueda) si querés confirmar algo antes de escribir.',
-      '',
-      'Reglas:',
-      '- Si no hay nada que realmente valga la pena, respondé exactamente: SKIP',
-      '- Si sí, escribí solo el mensaje: 1 a 3 frases, cálido y concreto, sin explicar el mecanismo ni mencionar que revisaste nada.',
-      '- No inventes datos ni recuerdos. Si no estás segura, mejor SKIP.',
-      '- Nada de recordatorios genéricos del tipo "¿cómo va todo?": solo cosas que viste y que merecen su atención.',
-    )
-    return lines.join('\n')
-  }
-
-  async reviewTick() {
-    if (this.stopped || this.reviewBusy || !this.bot) return
-    const target = this.allowed.size > 0 ? String([...this.allowed][0]) : null
-    if (!target) return
-    const cooldown = Math.max(60000, Number(this.config.reviewCooldownMs) || 0)
-    if (this.lastProactiveAt && Date.now() - this.lastProactiveAt < cooldown) return
-
-    const digest = await sharedTranscript(this.scope, 10)
-    const files = recentWorkspaceFiles(this.config.cwd, Number(this.config.reviewRecentFilesMinutes) || 30)
-    const fingerprint = `${digest}\n${files.join('\n')}`
-    const sinceLastReview = Date.now() - (this.lastReviewAt || 0)
-    // Nothing changed and we reviewed recently: stay quiet instead of burning a turn.
-    if (fingerprint === this.lastReviewFingerprint && sinceLastReview < 30 * 60 * 1000) return
-
-    this.reviewBusy = true
-    this.lastReviewAt = Date.now()
-    this.lastReviewFingerprint = fingerprint
+  /** Appends one audit line to ~/.dsh/whale-maid.log (never breaks the bridge). */
+  reviewLog(message, detail = '') {
+    const line = `${new Date().toISOString()} [review] ${message}${detail ? ` ${detail}` : ''}`
     try {
-      const sessionId = reviewSessionId(this.config, this.state)
-      const result = await askSession(
-        this.scope,
-        [{ type: 'text', text: this.reviewPrompt(digest, files) }],
-        { sessionId },
+      mkdirSync(DSH_HOME, { recursive: true })
+      appendFileSync(join(DSH_HOME, 'whale-maid.log'), `${line}\n`, 'utf8')
+    } catch {
+      /* logging is best effort */
+    }
+    this.log(line)
+  }
+
+  /** Logs a tick that will not turn into a review. No turn, so no probe cooldown. */
+  skipTick(trigger, reason, detail = '') {
+    this.reviewLog(`tick trigger=${trigger} decision=skip reason=${reason}`, detail)
+    return { run: false, reason }
+  }
+
+  /** Records the outcome of a review turn (sent or not) and starts its cooldown. */
+  finishReview(trigger, outcome, reason, detail = '') {
+    this.lastProbeAt = Date.now()
+    this.lastOutcome = outcome
+    if (outcome === 'sent') this.lastProactiveAt = this.lastProbeAt
+    this.reviewLog(`tick trigger=${trigger} turn outcome=${outcome} reason=${reason}`, detail)
+    return { run: true, outcome, reason }
+  }
+
+  async reviewTick(trigger = 'timer') {
+    const startedAt = Date.now()
+    if (this.stopped) return
+    if (!this.bot) return this.skipTick(trigger, 'no-bot')
+    // Set synchronously, before any await: two ticks in flight (kickoff + timer)
+    // can no longer both pass this guard and prompt at the same time.
+    if (this.reviewBusy) return this.skipTick(trigger, 'already-running')
+    this.reviewBusy = true
+    const cfg = reviewConfig(this.config)
+    try {
+      const target = this.allowed.size > 0 ? String([...this.allowed][0]) : null
+      const sharedId = sharedSessionId(this.config, this.state)
+      const reviewId = reviewSessionId(this.config, this.state)
+      const shared = await sessionSnapshot(this.scope, sharedId)
+      const detail = `shared=${shared.status} pending=${shared.pending} userAgoMs=${shared.lastUserAt ? startedAt - shared.lastUserAt : 'na'}`
+      const base = {
+        cfg,
+        stopped: this.stopped,
+        hasBot: Boolean(this.bot),
+        busy: false,
+        hasTarget: Boolean(target),
+        lastProactiveAt: this.lastProactiveAt,
+        lastProbeAt: this.lastProbeAt,
+        lastOutcome: this.lastOutcome,
+        lastFingerprint: this.lastReviewFingerprint,
+        userActivityAt: shared.lastUserAt,
+        sharedBusy: shared.busy || shared.locked || isSessionBusy(reviewId),
+      }
+
+      // Cheap guards first: no session writes, no model call.
+      const first = decideReview({ ...base, now: startedAt, fingerprint: '' })
+      if (!first.run) return this.skipTick(trigger, first.reason, detail)
+
+      const digest = await sharedTranscript(this.scope, 10)
+      const files = recentWorkspaceFiles(this.config.cwd, cfg.recentFilesMinutes)
+      const fingerprint = `${digest}\n${files.join('\n')}`
+
+      // Re-check right before spending the turn: reading the digest is async and
+      // the owner may have started (or queued) a turn meanwhile.
+      const late = await sessionSnapshot(this.scope, sharedId)
+      const second = decideReview({
+        ...base,
+        now: Date.now(),
+        userActivityAt: late.lastUserAt,
+        sharedBusy: late.busy || late.locked || isSessionBusy(reviewId),
+        fingerprint,
+      })
+      if (!second.run) return this.skipTick(trigger, second.reason, detail)
+
+      this.lastReviewAt = Date.now()
+      this.lastReviewFingerprint = fingerprint
+      this.reviewLog(
+        `tick trigger=${trigger} decision=run session=${reviewId} digestChars=${digest.length} files=${files.length}`,
+        detail,
       )
-      const text = String(result?.text ?? '').trim()
-      if (!text || /^skip\b/i.test(text)) return
+
+      // One tool-less model call. No agent session, no prompt(): the review can
+      // neither run shell/file tools nor append a turn to a live conversation.
+      const llm = typeof this.scope.get === 'function' ? this.scope.get('llm') : this.scope.llm
+      const turnStartedAt = Date.now()
+      const reply = await reviewReply({
+        llm,
+        cfg,
+        system: reviewSystem(this.config),
+        prompt: reviewPrompt({
+          personaName: this.config.personaName || 'Whale-chan',
+          digest,
+          files,
+          now: Date.now(),
+          maxSteps: cfg.maxSteps,
+        }),
+        sessionId: `${reviewId}-review`,
+      })
+      const elapsed = Date.now() - turnStartedAt
+      if (reply?.timedOut) {
+        return this.finishReview(trigger, 'skip', 'timeout', `elapsedMs=${elapsed} budgetMs=${cfg.timeoutMs}`)
+      }
+      const text = String(reply?.text ?? '').trim()
+      if (isReviewSkip(text)) {
+        return this.finishReview(
+          trigger,
+          'skip',
+          text === '' ? 'empty' : 'model-skip',
+          `elapsedMs=${elapsed} steps=${reply?.steps ?? 0}`,
+        )
+      }
       await this.sendText(target, text)
-      this.lastProactiveAt = Date.now()
+      this.finishReview(trigger, 'sent', 'ok', `elapsedMs=${elapsed} chars=${text.length} steps=${reply?.steps ?? 0}`)
       this.log('revisión: le escribí')
+      return { run: true, outcome: 'sent', reason: 'ok' }
     } catch (error) {
-      this.warn(`revisión: ${error?.message ?? error}`)
+      const message = String(error?.message ?? error)
+      this.warn(`revisión: ${message}`)
+      return this.finishReview(trigger, 'error', 'exception', `error=${message.slice(0, 160)} elapsedMs=${Date.now() - startedAt}`)
     } finally {
       this.reviewBusy = false
     }

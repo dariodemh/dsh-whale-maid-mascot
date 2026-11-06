@@ -1,6 +1,6 @@
-﻿{
+{
     "name":  "dsh-whale-maid-mascot",
-    "version":  "2.6.0",
+    "version":  "2.8.0",
     "description":  "Whale-chan: an in-page companion for DeepSeek Harness that also lives on Telegram. One character, one agent session, one memory: chat in the browser or from your phone, with real tools.",
     "author":  {
                    "name":  "dariodemh",
@@ -44,6 +44,7 @@
     "scripts":  {
                     "test":  "playwright test",
                     "test:host":  "node test/host-routes.test.mjs",
+                    "test:unit":  "node --test test/host-routes.test.mjs test/light-session.test.mjs test/persona.test.mjs test/doodle.test.mjs test/session-mutex.test.mjs test/review-gating.test.mjs test/telegram-review.test.mjs test/interface-mode.test.mjs",
                     "test:chat":  "playwright test test/whale-chat.spec.js"
                 },
     "exports":  {

@@ -6,6 +6,99 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## 2.8.0 — 2026-11-05
+
+### Added
+
+- **`interfaceMode` (`'classic'` by default, or `'fullscreen'`)** — the mascot
+  can be the face of the harness instead of a corner pet. In fullscreen mode the
+  web client registers a **global panel** in the harness' public `main` slot
+  (`ctx.slots.inject('main', …)` + `ctx.slots.register({ name: 'main', key })`,
+  switched with `ctx.layout.selectPanel(id | null)`) and collapses the sidebar
+  through `ctx.layout.toggleSidebar()`. The panel reuses the plugin's own
+  `.wm-root` mascot node and `.wm-chat` node — no chat or session logic is
+  reimplemented — and plugin-scoped CSS makes them fill the frame.
+- **Start preference served by the host:** `GET /whale-maid-mascot/interface`
+  answers `{ mode, personaName }`; the client reads it on load and, when
+  `interfaceMode` is `fullscreen`, opens the panel at boot. The configured mode
+  is host-side, so it survives reloads and applies to every browser.
+- **Always reversible:** a `Modo clásico` button in the surface header and a
+  `Pantalla completa` / `Volver al modo clásico` item in the mascot's context
+  menu switch modes at runtime (`selectPanel(null)` plus the sidebar restore).
+- **Graceful fallback:** when the harness build does not expose `slots`/`layout`
+  (or React is not available to the loader), the same surface is appended to
+  `<body>` as a plugin-scoped fixed overlay instead of failing.
+- `docs/interface-mode.md` documents the researched client-plugin contract, the
+  slots used, the alternatives considered (`shell.overlay`, URL route — the
+  harness has no public route/panel deep-link and panel selection is in-memory),
+  the manual test steps and the risks.
+- New tests: `test/interface-mode.test.mjs` pins the `classic` default, the
+  normalization and the `/interface` route (JSON shape, persona name, 405).
+
+## 2.7.0 — 2026-11-05
+
+### Fixed
+
+- **Crossed turns between the mascot's surfaces.** The Telegram bridge and the
+  periodic review could both call the session controller while the owner was
+  writing in the shared conversation, so two turns landed in the same session
+  and messages came out interleaved. Now:
+  - `askSession()` takes a **per-session mutex** (`withSessionLock`), so every
+    turn the plugin starts — review, Telegram, in-page chat — is serialized on
+    its session id. Different sessions still run concurrently.
+  - the **idle check happens inside the mutex**, re-reading the agent right
+    before `prompt()`; queued inbox work (`agent.inbox.nextTurn`/`nextStep`)
+    also blocks the prompt until it drains. Before, the status check and the
+    prompt were separated by an await, so another turn could slip in.
+  - opportunistic turns use `ifBusy: 'skip'`: when the session is busy they are
+    skipped, never queued behind a live turn.
+  - the review no longer fires while the owner has been active in the shared
+    session during the last **10 minutes** (`reviewActivityGuardMs`, configurable
+    with a 600000 ms default) or while the shared session has an active/queued
+    turn.
+  - the 60 s review kickoff can no longer be scheduled twice nor fire on top of
+    a recently started review; `reviewBusy` is set synchronously, before any
+    await, so two overlapping ticks cannot both pass the guard.
+- **Review turns running tools they should not.** The review used to be a full
+  agent turn in `<sessionId>-review` and could pick up shell/file tools (and the
+  main-conversation digest), which is what crossed the owner's conversation.
+  Since 2.7.0 the review is **one bounded, tool-less model call**: no agent
+  session, no `prompt()`, no shell, no file tools, only the precomputed digest
+  and the recently touched files. Hard budget: one call, `reviewTimeoutMs`
+  (60 s default) and `reviewMaxSteps` (2) in the prompt; over budget = silent
+  SKIP.
+- **Cooldown after a silent review.** `lastProactiveAt` was only updated when
+  the review actually sent a message, so a `SKIP` let the next tick re-fire.
+  Now every review turn (sent, `SKIP`, empty, error or timeout) records
+  `lastProbeAt`; a non-sent outcome starts `reviewSkipCooldownMs` (one hour by
+  default, the same as the send cooldown).
+
+### Changed
+
+- **Review cadence: once an hour.** `reviewEveryMs` default is now `3600000`
+  (and one hour is the floor, so a smaller configured value is clamped), and
+  `reviewCooldownMs` default is `3600000`, applied to sent messages and to
+  silent skips alike.
+- The review prompt no longer offers tools ("podés usar tus herramientas…") and
+  states explicitly that the turn has no shell/file access.
+- `waitTurn()` is cancellable, so a prompt that throws no longer leaves a
+  15-minute timer behind.
+
+### Added
+
+- **Per-tick audit log.** Every review tick appends one line to
+  `~/.dsh/whale-maid.log` with its ISO time, decision (`run`/`skip`), reason
+  (`user-active`, `shared-session-busy`, `cooldown-sent`, `cooldown-skip`,
+  `unchanged`, `no-target`, …), a `turn outcome` line (`sent`/`skip`/`error`,
+  elapsed ms, steps) and the shared-session status/pending counts.
+- Config keys: `reviewActivityGuardMs`, `reviewSkipCooldownMs`,
+  `reviewDedupeMs`, `reviewTimeoutMs`, `reviewMaxSteps`, `reviewMaxTokens`.
+- Tests: `test/session-mutex.test.mjs` (10 tests) pins the serialization,
+  idle revalidation, skip-if-busy and queue-depth behaviour;
+  `test/review-gating.test.mjs` (12 tests) pins the gating, budgets and prompt;
+  `test/telegram-review.test.mjs` (6 tests) covers the bridge wiring and the
+  audit log. New `test:unit` npm script runs the node-based suite.
+
 ## 2.6.0 — 2026-11-04
 
 ### Added

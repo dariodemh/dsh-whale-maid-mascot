@@ -120,14 +120,20 @@ Optional file `~/.dsh/whale-maid.json` (or the same keys in the
 | `lightChat` | `true` | Run the in-page chat in a light sibling session instead of the shared one |
 | `lightSessionId` | `<sessionId>-chat` | Explicit id for that light session |
 | `reviewEnabled` | `true` | Periodic self-review that may write to you on Telegram on its own |
-| `reviewEveryMs` | `180000` | How often the review looks around (minimum 1 minute) |
-| `reviewCooldownMs` | `900000` | Quiet time after she writes on her own |
-| `reviewSessionId` | `<sessionId>-review` | Session used for the review turns |
+| `reviewEveryMs` | `3600000` | How often the review looks around; **one hour is the floor**, not just the default |
+| `reviewCooldownMs` | `3600000` | Quiet time after she writes on her own **or after a silent SKIP** |
+| `reviewActivityGuardMs` | `600000` | No review while you wrote in the shared session less than 10 minutes ago |
+| `reviewSkipCooldownMs` | `3600000` | Quiet time after a review that wrote nothing (SKIP, empty, error, timeout) |
+| `reviewDedupeMs` | `1800000` | Ignore a review whose digest and files did not change within this window |
+| `reviewTimeoutMs` | `60000` | Hard budget for the review call; over budget = silent SKIP |
+| `reviewMaxSteps` | `2` | Hard step budget stated to the model (the review has no tools at all) |
+| `reviewSessionId` | `<sessionId>-review` | Id used to route/log the review call (it is not an agent session) |
 | `reviewRecentFilesMinutes` | `30` | Window of "recently touched files" she inspects |
 | `allowedUserIds` | `[]` | Extra Telegram user ids allowed without pairing |
 | `tokenEnv` | `TELEGRAM_BOT_TOKEN` | Env var holding the bot token |
 | `tokenFile` | `~/.dsh/whale-maid.token` | File holding the bot token |
 | `streamReplies` | `true` | Edit a Telegram message live while she writes |
+| `interfaceMode` | `classic` | `classic` keeps the corner pet over the normal harness GUI; `fullscreen` opens her own global panel as the main view (sidebar collapsed, back with one click) |
 | `model` | profile default | `{ provider, model, reasoningEffort }` fixed for the session |
 | `turnTimeoutMs` | `900000` | Max wait for one agent turn |
 | `maxPhotoBytes` | `10485760` | Largest Telegram photo she downloads |
@@ -161,12 +167,36 @@ the main conversation appended — so it keeps the thread without paying for (or
 queueing behind) a heavy agent turn. Set `lightChat: false` to have one single
 session again.
 
-The Telegram bridge also runs a review loop: every `reviewEveryMs` the mascot
-takes a turn in `<sessionId>-review`, looks at the last messages of the main
-conversation and the files touched in the last `reviewRecentFilesMinutes`, and
-decides whether writing is worth it. If not, it answers `SKIP` and stays silent;
-`reviewCooldownMs` stops messages from piling up, and when nothing changed it
-stays quiet for up to 30 minutes.
+The Telegram bridge also runs a review loop, at most once an hour: the mascot
+looks at the last messages of the main conversation and the files touched in the
+last `reviewRecentFilesMinutes`, and decides whether writing is worth it. Since
+2.7.0 the review is **one bounded, tool-less model call**: it never runs an agent
+turn, never gets shell or file tools, and it skips when the shared session has an
+active (or queued) turn or when you wrote in the last 10 minutes
+(`reviewActivityGuardMs`). If not, it answers `SKIP` and stays silent — and,
+unlike before, `SKIP` also starts the cooldown (`reviewSkipCooldownMs`, one hour
+by default), so an empty review is not repeated minutes later. Every tick is
+appended to `~/.dsh/whale-maid.log` with its time, decision and reason, so the
+behaviour can be audited afterwards.
+
+### Interface mode: the mascot as the main view
+
+`interfaceMode: "fullscreen"` (default `"classic"`) turns her into the face of
+the harness: the web client registers a **global panel** in the harness' public
+`main` slot (`ctx.slots` + `ctx.layout.selectPanel`, the same contract the
+Plugins page uses), moves the existing mascot and chat nodes into it, and
+collapses the sidebar with `ctx.layout.toggleSidebar()`. The harness keeps
+running behind the panel — same sessions, tools and Telegram — and nothing about
+chat or sessions is reimplemented. `Modo clásico` in the surface header (or
+`Pantalla completa` / `Volver al modo clásico` in the mascot's context menu)
+switches both ways at runtime.
+
+The mode is read host-side and served by `GET /whale-maid-mascot/interface`, so
+the "start in this view" preference survives reloads and applies to every browser.
+The default stays classic. On a harness build without `slots`/`layout` the mode
+degrades to a plugin-scoped fixed overlay instead of failing. The API contract,
+alternatives considered and risks are documented in
+[docs/interface-mode.md](docs/interface-mode.md).
 
 ## Security
 
