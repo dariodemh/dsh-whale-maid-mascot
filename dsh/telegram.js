@@ -393,6 +393,35 @@ export class WhaleTelegram {
     }
     try {
       this.scope.effect(() => tools.register({
+        name: 'telegram_photo',
+        description: 'Send a local image file to the owner over Telegram as a real photo (renders inline on the phone). Use it when the owner cannot open file links, e.g. to show a screenshot.',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Absolute path of a local .png/.jpg/.webp/.gif file.' },
+            caption: { type: 'string', description: 'Optional short caption.' },
+            chat_id: { type: 'string', description: 'Optional Telegram chat id; defaults to the owner.' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        },
+        output,
+        execute: async (args) => {
+          const path = typeof args?.path === 'string' ? args.path.trim() : ''
+          if (path === '') throw new Error('path is required')
+          const explicit = args?.chat_id === undefined ? null : String(args.chat_id)
+          const target = explicit ?? (this.allowed.size > 0 ? String([...this.allowed][0]) : null)
+          if (!target) throw new Error('no Telegram recipient is authorized yet')
+          const caption = typeof args?.caption === 'string' ? args.caption : ''
+          const sent = await this.bot.sendPhoto(target, path, { caption })
+          return { sent: true, chat_id: target, message_id: sent?.message_id ?? null }
+        },
+      }))
+    } catch (error) {
+      this.warn(`no pude registrar telegram_photo: ${error?.message ?? error}`)
+    }
+    try {
+      this.scope.effect(() => tools.register({
         name: 'whale_remember',
         description: 'Save one stable fact, the preferred name, a preference about the user, or one of your own deliberate evolution entries, into Whale-chan\'s long-term memory, shared with her in-page chat in DeepSeek Harness. Use it when the user shares something durable worth remembering or when you yourself choose to keep a decision about who you are.',
         parameters: {
@@ -745,6 +774,18 @@ export class WhaleTelegram {
         this.warn(`envío: ${error?.message ?? error}`)
         return
       }
+    }
+  }
+
+  /** Upload a local image as an inline Telegram photo (for screenshots). */
+  async sendPhoto(chatId, imagePath, caption = '') {
+    if (!this.bot) return
+    try {
+      await this.bot.sendPhoto(chatId, imagePath, { caption })
+    } catch (error) {
+      this.warn(`foto: ${error?.message ?? error}`)
+      // Fallback: at least tell the owner the file exists and where it is.
+      await this.sendText(chatId, `No pude subir la imagen: ${error?.message ?? error}\nArchivo: ${imagePath}`)
     }
   }
 }

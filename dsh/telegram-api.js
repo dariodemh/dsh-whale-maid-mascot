@@ -1,5 +1,14 @@
 /** Minimal Telegram Bot API client (long polling), no dependencies. */
+import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+
 const API = 'https://api.telegram.org'
+const PHOTO_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }
+
+function photoType(path) {
+  const ext = String(path).toLowerCase().split('.').pop()
+  return PHOTO_TYPES[ext] ?? 'application/octet-stream'
+}
 
 export class TelegramError extends Error {
   constructor(method, description, status) {
@@ -40,6 +49,31 @@ export class TelegramBot {
 
   sendMessage(chatId, text, extra = {}) {
     return this.call('sendMessage', { chat_id: chatId, text, ...extra })
+  }
+
+  /**
+   * Upload one local image as a real Telegram photo (not a file attachment or
+   * a link, so it renders inline on the phone). Uses multipart/form-data.
+   */
+  async sendPhoto(chatId, imagePath, extra = {}) {
+    const buffer = await readFile(imagePath)
+    const form = new FormData()
+    form.append('chat_id', String(chatId))
+    form.append('photo', new Blob([buffer], { type: photoType(imagePath) }), basename(imagePath))
+    if (typeof extra.caption === 'string' && extra.caption.trim() !== '') form.append('caption', extra.caption)
+    const response = await this.fetch(`${API}/bot${this.token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    })
+    let payload
+    try {
+      payload = await response.json()
+    } catch {
+      throw new TelegramError('sendPhoto', `HTTP ${response.status}`, response.status)
+    }
+    if (!payload || payload.ok !== true) throw new TelegramError('sendPhoto', payload?.description ?? `HTTP ${response.status}`, response.status)
+    return payload.result
   }
 
   editMessageText(chatId, messageId, text, extra = {}) {
