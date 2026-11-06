@@ -6,6 +6,98 @@
 > describes the changes made **in this repository** on top of the upstream 1.0.0
 > base; it is not the upstream changelog.
 
+## Sin publicar — 2026-11-06 (local)
+
+### Added (espejo de imágenes salientes)
+
+- **Las fotos que Cala manda por Telegram ahora también se ven en casa.** El
+  transcript de DSH solo guarda texto, así que `telegram_photo` subía la foto al
+  móvil y no dejaba rastro local. Nuevo módulo `dsh/outbox.js`: al enviar, copia la
+  imagen a `~/.dsh/whale-maid-outbox/` y registra ruta + metadatos (nombre,
+  `mediaType`, caption, `messageId`, fecha) en `~/.dsh/whale-maid.outbox.json` —
+  **nunca base64**. `GET /whale-maid-mascot/history` fusiona esos registros como
+  mensajes `user` con `image: { id, url, name, mediaType }` (ordenados por fecha,
+  sin duplicar el mismo `messageId`, últimos 30) y `GET
+  /whale-maid-mascot/outbox-image?id=…` sirve los bytes. Se pintan en el chat
+  in-page (`<img>` con lightbox existente) y en la ventana WPF (burbuja con
+  miniatura descargada por HTTP local). Es solo espejo local: no se reenvía nada a
+  Telegram. Límite: 8 MB por archivo, 40 registros (se borran los más viejos).
+  Tests: `test/outbox.test.mjs` (6).
+
+### Fixed (silencio en Telegram y teclado del chat)
+
+- **`SKIP` ya no llega al chat**: cuando el texto final del turno, recortado, es
+  exactamente `SKIP` (sin distinguir mayúsculas), el puente de Telegram no envía
+  nada: ni mensaje, ni indicador de escritura, ni placeholder de respuesta vacía.
+  El filtro vive en `isSilentReply()` y también cubre el streaming (se retienen
+  los prefijos `S`/`SK`/`SKI`/`SKIP` hasta saber si el turno es silencioso).
+  `SKIP algo` sigue siendo un mensaje real.
+- **`Shift+Enter` inserta salto de línea** en el textarea de `.wm-chat`; `Enter`
+  sin modificadores sigue enviando. `Ctrl`/`Alt`/`Meta+Enter` también insertan
+  el salto en la posición del cursor y el textarea se autoajusta de altura.
+
+### Fixed (ventana de escritorio / puente con Telegram)
+
+- **Espejo a Telegram robusto**: los envíos de la ventana ahora pasan por una cola con un
+  único envío en vuelo, se trocean a ≤ 3800 caracteres (Telegram rechaza > 4096) y cada
+  resultado se registra (`telegram send ok id=…` / `FAIL http=…`). La respuesta de Cala se
+  manda como `reply_to` del mensaje espejado del usuario.
+- **Reintentos del chat de la ventana**: si `/chat` se corta por red o por modelo saturado
+  se reintenta solo (máx. 2, con espera creciente); un timeout no se reintenta para no
+  duplicar turnos en la sesión compartida. El motivo del fallo se muestra en el hilo y en
+  `%TEMP%\cala-window.log`.
+- **Un solo temporizador de sincronización** cada 3 s (había dos idénticos).
+- **No se pierde una respuesta pendiente** al enviar otro mensaje: avisa y espera.
+- **El historial reintenta** cuando la primera carga falla (antes quedaba marcado como
+  cargado para siempre).
+- **Ánimo → sprite** según `personalidades.txt`: pensando/comiendo tokens, dudas, seria,
+  flotando, playa, atender.
+
+### Added
+
+- **Pack `Chan`** en `assets/chan/`: 24 sprites PNG con fondo transparente y guía de
+  personalidades. La ventana usa un sprite por estado (`base`, `notas`, `lentes`, `seria`,
+  `cafe`, `cocina`, `pensando`, `dudas`, `espera`, `flotando`, `playa`, `novia`) y los 4
+  trajes con sus 3 vistas (`atender`/`paso`/`espaldas` × `alegre`/`lazo`/`utiles`/`chaleco`);
+  se eligen desde el menú contextual (ESTADO / TRAJE / VISTA) y se persisten en
+  `desktopChanState`, `desktopChanView` y `desktopChanOutfit`. Cambiar de sprite ya no
+  redimensiona la ventana.
+- **Imágenes en el chat de la ventana de escritorio**: botón 📎 junto al campo
+  (`OpenFileDialog` png/jpg/webp/gif) y arrastrar-y-soltar un archivo sobre la
+  ventana (`AllowDrop` + `DragEnter`/`DragOver`/`Drop`). Las elegidas se muestran
+  como miniaturas sobre el input con `×` para quitarlas. Al enviar se adjuntan al
+  POST de `/whale-maid-mascot/chat` como `images: [{ mimeType, mediaType,
+  dataBase64, name }]`, el mismo formato que ya consume `admitChatImages`
+  (`body.images`, `mimeType`, `dataBase64`). Límites: 3 imágenes, 6 MB cada una,
+  con mensaje legible si el archivo no es imagen o es demasiado grande.
+
+### Fixed
+
+- **Boot crash in the 2.8.0 client (`web boot: 1 entry did not activate —
+  dsh-whale-maid-mascot: loading`).** The interface mode used
+  `ctx.slots.inject('main', …)` (and earlier `ctx.inject(['layout'])`) to wait
+  for harness declarations. On builds that never declare that slot the client
+  entry stayed in `loading` and aborted the whole app start. The client now
+  **never waits**: the global panel is registered directly with
+  `ctx.slots.register({ name: 'main', key })` inside a try/catch, and if the
+  slot is absent the fullscreen mode uses the plugin-scoped overlay fallback.
+  `layout` is read opportunistically with `ctx.get` only. Covered by
+  `test/interface-boot.test.mjs`, which loads the real `dsh/client.js` through
+  the renderer's `window.__ModuleLoader__` protocol and asserts `apply()` returns
+  `undefined` with no slot/service waiter.
+- **Enter in the desktop (WPF) chat window did not send.** The TextBox had
+  `AcceptsReturn = $true` and the handler was attached with `Add_KeyDown`: a
+  TextBox with `AcceptsReturn` marks Enter handled in its own class handler
+  before instance bubbling handlers run, so the plugin handler never fired and
+  the control inserted a line break for both Enter and Shift+Enter. The handler
+  is now `Add_PreviewKeyDown` (tunneling), checks the real modifier state with
+  `Keyboard.IsKeyDown(Left/RightShift|Left/RightCtrl|Left/RightAlt|LWin|RWin)`,
+  handles `Key.System` (Alt+Enter) through `SystemKey`, marks the event handled
+  and logs every keypress through `Log-Note` (`%TEMP%\cala-window.log`:
+  `chat-key: fired key=… systemKey=… mods=… shift=… branch=send|newline`).
+  Enter alone sends; Shift/Ctrl/Alt/Win+Enter inserts a line break at the caret.
+  Handler exceptions are logged instead of swallowed.
+
 ## 2.8.0 — 2026-11-05
 
 ### Added

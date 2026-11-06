@@ -44,6 +44,15 @@ export const DEFAULTS = {
   // normal harness GUI; 'fullscreen' registers her own global panel (the
   // harness' public client-plugin surface) and starts there. Default classic.
   interfaceMode: 'classic',
+  // Desktop companion: a frameless, transparent, always-on-top window that
+  // renders only her sprite (plus a speech bubble) on the monitor, so she is
+  // visible while the harness runs behind the scenes. Opt-in: false by default.
+  desktopMode: false,
+  desktopWidth: 260,
+  desktopAlwaysOnTop: true,
+  desktopSprite: 'a',
+  desktopX: null,
+  desktopY: null,
   pollTimeoutSeconds: 50,
   turnTimeoutMs: 15 * 60 * 1000,
   maxReplyChars: 3800,

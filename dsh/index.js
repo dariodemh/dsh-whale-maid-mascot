@@ -31,7 +31,15 @@ import {
   validUserId,
 } from './memory.js'
 import { askSession, historyJson, promptParts, sharedTranscript } from './session.js'
+import { mergeHistoryMessages, outboxHistoryMessages, readOutboxImage } from './outbox.js'
 import { interfaceModeOf, lightSessionId, loadConfig, loadState, personaBody } from './config.js'
+import {
+  closeDesktopWindow,
+  desktopStatus,
+  openDesktopWindow,
+  setDesktopMode,
+  toggleDesktopWindow,
+} from './desktop.js'
 
 export const name = 'whale-maid-mascot'
 export const inject = []
@@ -239,6 +247,12 @@ const WORKSPACE_FILE_ROUTE = '/whale-maid-mascot/workspace/file'
 // the mode itself is configured host-side so it survives a browser reload and
 // applies to every browser that opens this harness.
 const INTERFACE_ROUTE = '/whale-maid-mascot/interface'
+// Mirrored images the assistant sent out (Telegram photos): served back to the
+// two local surfaces so they can render them in the shared thread.
+const OUTBOX_IMAGE_ROUTE = '/whale-maid-mascot/outbox-image'
+// Desktop companion: open/close/status for the frameless transparent window
+// that shows only her sprite on the monitor. Local-only control route.
+const DESKTOP_ROUTE = '/whale-maid-mascot/desktop'
 const IGNORED_DIRS = new Set([
   'node_modules', '.git', '.pnpm-store', '.cache', '.next', '.nuxt', '.venv', 'venv',
   '__pycache__', 'dist', 'build', 'out', 'tmp', 'temp', '.idea', '.vscode', '.dsh',
@@ -1126,10 +1140,40 @@ async function handleSharedHistory(req, res) {
     return
   }
   try {
-    sendJson(res, 200, await historyJson(agentHostScope))
+    const history = await historyJson(agentHostScope)
+    // The DSH transcript only carries text; photos sent out (telegram_photo)
+    // are mirrored from the local outbox so both surfaces show them too.
+    const messages = mergeHistoryMessages(history?.messages ?? [], outboxHistoryMessages())
+    sendJson(res, 200, { messages })
   } catch (error) {
     sendJson(res, 500, { error: String(error && error.message ? error.message : error) })
   }
+}
+
+/** GET /whale-maid-mascot/outbox-image?id=…: serves one mirrored image. */
+export function handleOutboxImage(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end()
+    return
+  }
+  let url
+  try {
+    url = new URL(req.url || '/', 'http://localhost')
+  } catch {
+    sendJson(res, 400, { error: 'bad request' })
+    return
+  }
+  const hit = readOutboxImage(url.searchParams.get('id') || '')
+  if (!hit) {
+    sendJson(res, 404, { error: 'image not found' })
+    return
+  }
+  res.writeHead(200, {
+    'content-type': hit.mediaType,
+    'content-length': String(hit.bytes.length),
+    'cache-control': 'private, max-age=86400',
+  })
+  res.end(hit.bytes)
 }
 /** GET /whale-maid-mascot/interface: the face the browser should open with. */
 export function handleInterface(req, res) {
@@ -1142,6 +1186,37 @@ export function handleInterface(req, res) {
     mode: interfaceModeOf(config),
     personaName: typeof config.personaName === 'string' && config.personaName ? config.personaName : 'Whale-chan',
   })
+}
+
+/** GET /whale-maid-mascot/desktop: open, close, toggle or report the companion window. */
+async function handleDesktop(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.writeHead(405).end()
+    return
+  }
+  const url = new URL(req.url || '/', 'http://localhost')
+  const action = (url.searchParams.get('action') || 'status').toLowerCase()
+  try {
+    if (action === 'open') {
+      sendJson(res, 200, await setDesktopMode(true))
+      return
+    }
+    if (action === 'close') {
+      sendJson(res, 200, await setDesktopMode(false))
+      return
+    }
+    if (action === 'toggle') {
+      sendJson(res, 200, await toggleDesktopWindow())
+      return
+    }
+    if (action === 'hide') {
+      sendJson(res, 200, closeDesktopWindow(false))
+      return
+    }
+    sendJson(res, 200, desktopStatus())
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: String(error && error.message ? error.message : error) })
+  }
 }
 
 export function apply(ctx, config = {}) {
@@ -1206,10 +1281,22 @@ export function apply(ctx, config = {}) {
         handler: (req, res) => handleSharedHistory(req, res),
       })
       scope.webServer.register({
+        name: 'whale-maid-mascot-outbox-image',
+        kind: 'exact',
+        path: OUTBOX_IMAGE_ROUTE,
+        handler: (req, res) => handleOutboxImage(req, res),
+      })
+      scope.webServer.register({
         name: 'whale-maid-mascot-interface',
         kind: 'exact',
         path: INTERFACE_ROUTE,
         handler: (req, res) => handleInterface(req, res),
+      })
+      scope.webServer.register({
+        name: 'whale-maid-mascot-desktop',
+        kind: 'exact',
+        path: DESKTOP_ROUTE,
+        handler: (req, res) => handleDesktop(req, res),
       })
     } catch (error) {
       console.error(`[whale-maid-mascot] asset routes skipped: ${error}`)
@@ -1250,4 +1337,19 @@ export function apply(ctx, config = {}) {
       console.error(`[whale-maid-mascot] image route skipped: ${error}`)
     }
   })
+
+  // Desktop companion: opt-in and only when the host is Electron. Deferred so
+  // the harness window and the plugin routes exist before the extra window
+  // shows; a failure stays contained and leaves the in-page mascot untouched.
+  try {
+    if (loadConfig().desktopMode === true) {
+      setTimeout(() => {
+        openDesktopWindow().catch((error) => {
+          console.error(`[whale-maid-mascot] desktop boot: ${error}`)
+        })
+      }, 2000)
+    }
+  } catch {
+    /* unreadable config: stay in the in-page mode */
+  }
 }

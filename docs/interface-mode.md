@@ -84,12 +84,16 @@ Layout facts that shaped the design (from the ui-layout README and its CSS):
    `~/.dsh/whale-maid.json`, default `classic`. The host serves it to the browser
    through `GET /whale-maid-mascot/interface` (`{ mode, personaName }`), so the
    preference is host-side and applies to every browser that opens the harness.
-2. **Client** registers a global panel `main` with `key: 'whale-maid'` through
-   `ctx.slots.inject('main', ...)`. The panel does **not** reimplement chat or
-   sessions: on mount it moves the two nodes the plugin already owns — `.wm-root`
-   (mascot) and `.wm-chat` (the chat panel) — into its own stage, with plugin-scoped
-   CSS (`html[data-whm-interface="fullscreen"] .wm-surface-*`). On unmount the
-   nodes and their inline styles are restored to `<body>`.
+2. **Client** registers a global panel `main` with `key: 'whale-maid'` directly
+   through `ctx.slots.register(...)` inside a try/catch (never
+   `ctx.slots.inject('main', …)`: waiting on a slot the build does not declare
+   keeps the client entry in `loading` and aborts the app boot). The panel does
+   **not** reimplement chat or sessions: on mount it moves the two nodes the
+   plugin already owns — `.wm-root` (mascot) and `.wm-chat` (the chat panel) —
+   into its own stage, with plugin-scoped CSS
+   (`html[data-whm-interface="fullscreen"] .wm-surface-*`). On unmount the nodes
+   and their inline styles are restored to `<body>`. If the harness does not
+   declare `main`, the registration is skipped and the overlay fallback is used.
 3. In fullscreen mode the client calls `ctx.layout.selectPanel('whale-maid')`,
    collapses the sidebar through `ctx.layout.toggleSidebar()` (only when it was
    expanded; the previous state is restored on exit), and closes the right panel

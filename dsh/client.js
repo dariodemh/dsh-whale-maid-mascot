@@ -334,7 +334,8 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           '100%{transform:translateX(-50%) rotate(0deg)}}' +
           '@keyframes wm-drop{0%{transform:translateY(0)}45%{transform:translateY(-12px)}' +
           '70%{transform:translateY(4px)}100%{transform:translateY(0)}}' +
-          '.wm-menu{position:fixed;z-index:2147483050;min-width:190px;background:#fff;color:#1e293b;' +
+          '.wm-menu{position:fixed;z-index:2147483050;min-width:190px;max-height:calc(100vh - 16px);' +
+          'overflow-y:auto;overscroll-behavior:contain;background:#fff;color:#1e293b;' +
           'border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.25);' +
           'padding:5px;display:none;font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;}' +
           '.wm-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;' +
@@ -986,13 +987,13 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         resetFeedArm()
         if (!menuEl) return
         renderFeedMenu()
-        var menuW = 210
-        var menuH = 150
+        menuEl.style.display = 'block'
+        var menuW = menuEl.offsetWidth || 210
+        var menuH = menuEl.offsetHeight || 150
         var left = Math.min(x, window.innerWidth - menuW - 8)
         var top = Math.min(y, window.innerHeight - menuH - 8)
         menuEl.style.left = Math.max(8, left) + 'px'
         menuEl.style.top = Math.max(8, top) + 'px'
-        menuEl.style.display = 'block'
       }
 
       function resetFeedArm() {
@@ -1514,13 +1515,17 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         resetIdleTimer()
         if (!menuEl) return
         renderMainMenu()
-        var menuW = 210
-        var menuH = 150
+        // Measure the real menu instead of guessing: it outgrew the old 150px
+        // estimate and the tail was clipped at the viewport edge. CSS caps the
+        // height and scrolls, so clamping by the measured box keeps every item
+        // reachable.
+        menuEl.style.display = 'block'
+        var menuW = menuEl.offsetWidth || 210
+        var menuH = menuEl.offsetHeight || 150
         var left = Math.min(e.clientX, window.innerWidth - menuW - 8)
         var top = Math.min(e.clientY, window.innerHeight - menuH - 8)
         menuEl.style.left = Math.max(8, left) + 'px'
         menuEl.style.top = Math.max(8, top) + 'px'
-        menuEl.style.display = 'block'
       }
 
       function hideContextMenu() {
@@ -2116,14 +2121,41 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         chatInputEl.style.height = Math.min(88, chatInputEl.scrollHeight || 34) + 'px'
       }
 
-      function onChatInputKeyDown(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault()
-          sendChatMessage()
-        } else if (e.key === 'Escape') {
-          e.stopPropagation()
-          closeChat()
+      function insertChatNewline() {
+        if (!chatInputEl) return
+        var start = chatInputEl.selectionStart
+        var end = chatInputEl.selectionEnd
+        var value = chatInputEl.value
+        if (typeof start !== 'number' || typeof end !== 'number') {
+          chatInputEl.value = value + '\n'
+          autoGrowChatInput()
+          return
         }
+        chatInputEl.value = value.slice(0, start) + '\n' + value.slice(end)
+        var caret = start + 1
+        try { chatInputEl.setSelectionRange(caret, caret) } catch (e) {}
+        autoGrowChatInput()
+      }
+
+      function onChatInputKeyDown(e) {
+        if (e.key !== 'Enter') {
+          if (e.key === 'Escape') {
+            e.stopPropagation()
+            closeChat()
+          }
+          return
+        }
+        // Enter while an IME is composing confirms the candidate, never sends.
+        if (e.isComposing || e.keyCode === 229) return
+        // Shift/Ctrl/Alt/Meta+Enter insert a line break at the caret instead of
+        // sending. preventDefault keeps the browser from also submitting.
+        if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) {
+          e.preventDefault()
+          insertChatNewline()
+          return
+        }
+        e.preventDefault()
+        sendChatMessage()
       }
 
       function chatEl(role, text, images) {
@@ -2186,7 +2218,11 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
             if (!data || !Array.isArray(data.messages) || data.messages.length === 0) return
             if (chatPending) return
             chatHistory = data.messages.map(function (m) {
-              return { role: m.role === 'user' ? 'user' : 'bot', text: String(m.text || '') }
+              var entry = { role: m.role === 'user' ? 'user' : 'bot', text: String(m.text || '') }
+              // Outgoing Telegram photos are mirrored by the host into the same
+              // history as a `user` entry with an `image` URL.
+              if (m.image && typeof m.image.url === 'string' && m.image.url) entry.images = [m.image.url]
+              return entry
             })
             saveChatHistory()
             renderChatMessages()
@@ -4282,11 +4318,13 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       // Interface mode: classic (corner mascot) vs fullscreen (mascot surface).
       //
       // Public contract used (documented in @deepseek-ai/dsh-client-ui-layout):
-      //   - ctx.slots.inject('main', ...) + ctx.slots.register({ name: 'main',
-      //     key: <id> }) registers a *global panel*, the official view a client
-      //     plugin can own. `ctx.layout.selectPanel(id | null)` switches the
-      //     center column to it (null = the Conversation) and
-      //     `ctx.layout.toggleSidebar()` collapses/restores the sidebar.
+      //   - ctx.slots.register({ name: 'main', key: <id> }) registers a *global
+      //     panel*, the official view a client plugin can own. It is called
+      //     directly and never through a slot-injection waiter: waiting on a
+      //     declaration the app may never publish keeps this entry in `loading`.
+      //     `ctx.layout.selectPanel(id | null)` switches the center column to it
+      //     (null = the Conversation) and `ctx.layout.toggleSidebar()`
+      //     collapses/restores the sidebar.
       //   - No chat/session logic is reimplemented: the panel reuses the very
       //     same .wm-root (mascot) and .wm-chat nodes the plugin already builds,
       //     moving only those nodes into the surface.
@@ -4354,17 +4392,17 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
         var head = document.createElement('div')
         head.className = 'wm-surface-head'
         var who = document.createElement('div')
-        who.textContent = 'ðŸ›'
+        who.textContent = '🐋'
         var title = document.createElement('div')
         title.className = 't'
         title.textContent = interfacePersonaName
         var sub = document.createElement('div')
         sub.className = 's'
-        sub.textContent = 'DeepSeek Harness Â· sesiones y herramientas por detrÃ¡s'
+        sub.textContent = 'DeepSeek Harness · sesiones y herramientas por detrás'
         var back = document.createElement('button')
         back.type = 'button'
         back.className = 'wm-surface-exit'
-        back.textContent = 'Modo clÃ¡sico'
+        back.textContent = 'Modo clásico'
         back.addEventListener('click', function () { setInterfaceMode(interfaceCtx, 'classic') })
         head.appendChild(who)
         head.appendChild(title)
@@ -4469,26 +4507,29 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
       function registerInterfaceSurface(ctx) {
         if (!ctx) return
         interfaceCtx = ctx
-        // `layout` is optional on purpose: it is injected softly, never listed in
-        // exports.inject, so a build without that service cannot stall the plugin.
+        // `layout` and the `main` slot are strictly optional and are NEVER
+        // awaited. In the web boot an unresolved injected slot/service leaves
+        // the plugin entry in `loading`, which aborts the whole app start
+        // ("web boot: 1 entry did not activate — dsh-whale-maid-mascot: loading").
         if (ctx.layout) interfaceLayout = ctx.layout
         else if (typeof ctx.get === 'function') {
           try { interfaceLayout = ctx.get('layout') || null } catch (e) {}
         }
-        // Never call ctx.inject('layout') here: in the web boot an unresolved
-        // injected service leaves the plugin entry stuck in `loading`, which
-        // aborts the whole app start ("1 entry did not activate"). Layout must
-        // stay fully optional, so it is only used when already present.
-        if (!ctx.slots || typeof ctx.slots.inject !== 'function' || !React) return
+        if (!ctx.slots || !React || typeof ctx.slots.register !== 'function') return
+        // Register the global panel directly and only with what is available
+        // right now. If the harness does not expose the `main` slot, the
+        // registration throws (caught here) and nothing stays pending: the
+        // fullscreen mode still works through the plugin-scoped overlay below.
         try {
-          ctx.slots.inject('main', function () {
-            var dispose = ctx.slots.register({ name: 'main', key: INTERFACE_PANEL_ID, order: 50 }, InterfacePanel)
-            interfacePanelRegistered = true
-            refreshInterfaceSurface()
-            return dispose
-          })
+          var dispose = ctx.slots.register({ name: 'main', key: INTERFACE_PANEL_ID, order: 50 }, InterfacePanel)
+          interfacePanelRegistered = true
+          if (typeof ctx.effect === 'function' && typeof dispose === 'function') {
+            try { ctx.effect(function () { return dispose }) } catch (e) {}
+          }
+          refreshInterfaceSurface()
         } catch (e) {
-          console.warn('[whale-maid-mascot] interface panel skipped:', e && e.message)
+          interfacePanelRegistered = false
+          console.warn('[whale-maid-mascot] interface panel skipped (main slot unavailable):', e && e.message)
         }
       }
 
@@ -4506,7 +4547,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
           if (interfaceLayout && typeof interfaceLayout.closeRightbar === 'function') {
             try { interfaceLayout.closeRightbar() } catch (e) {}
           }
-          try { say('Pantalla completa. Volver: menÃº â†’ Modo clÃ¡sico.') } catch (e) {}
+          try { say('Pantalla completa. Volver: menú → Modo clásico.') } catch (e) {}
         } else {
           if (interfaceMounted && !interfaceFallback) {
             if (!interfaceLayout) unmountSurface()
@@ -4517,7 +4558,7 @@ if (!window.__ModuleLoader__ || typeof window.__ModuleLoader__.load !== 'functio
             unmountSurface()
           }
           restoreSidebarForInterface()
-          try { say('Modo clÃ¡sico.') } catch (e) {}
+          try { say('Modo clásico.') } catch (e) {}
         }
       }
 

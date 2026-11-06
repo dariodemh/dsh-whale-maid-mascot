@@ -25,10 +25,32 @@ import {
   sharedSessionId,
 } from './config.js'
 import { askSession, ensureSession, isSessionBusy, sessionSnapshot, sharedTranscript } from './session.js'
+import { recordOutboxImage } from './outbox.js'
 import { decideReview, isReviewSkip, reviewConfig, reviewPrompt, reviewReply, reviewSystem } from './review.js'
 import { TelegramBot } from './telegram-api.js'
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.pnpm-store', 'dist', 'build', 'coverage'])
+
+const SILENT_REPLY = 'skip'
+
+/**
+ * True when a turn's final text is the silence convention: exactly "SKIP",
+ * case-insensitive and ignoring surrounding whitespace. "SKIP algo" is a real
+ * message, not silence, so it must still be sent.
+ */
+export function isSilentReply(text) {
+  return String(text ?? '').trim().toLowerCase() === SILENT_REPLY
+}
+
+/**
+ * True while streamed text could still turn into the silence convention
+ * ("S", "SK", "SKI", "SKIP"). Such a partial reply is held back: sending it
+ * live would leak "SKIP" to Telegram before the turn knows it is silent.
+ */
+function couldBecomeSilentReply(text) {
+  const clean = String(text ?? '').trim().toLowerCase()
+  return clean !== '' && SILENT_REPLY.startsWith(clean)
+}
 
 /** Files touched in the last `minutes`, newest first, as short readable lines. */
 function recentWorkspaceFiles(root, minutes, limit = 10) {
@@ -413,8 +435,15 @@ export class WhaleTelegram {
           const target = explicit ?? (this.allowed.size > 0 ? String([...this.allowed][0]) : null)
           if (!target) throw new Error('no Telegram recipient is authorized yet')
           const caption = typeof args?.caption === 'string' ? args.caption : ''
-          const sent = await this.bot.sendPhoto(target, path, { caption })
-          return { sent: true, chat_id: target, message_id: sent?.message_id ?? null }
+          const photo = await this.sendPhoto(target, path, caption)
+          return {
+            sent: true,
+            chat_id: target,
+            message_id: photo?.sent?.message_id ?? null,
+            // The photo is also mirrored into the shared local thread, so the
+            // in-page chat and the desktop window can render it.
+            local_mirror: photo?.mirror?.ok ? photo.mirror.id : null,
+          }
         },
       }))
     } catch (error) {
@@ -688,23 +717,37 @@ export class WhaleTelegram {
   }
 
   async runTurn(chatId, parts) {
-    const stopTyping = this.startTyping(chatId)
+    // The typing indicator is lazy on purpose: a turn whose only output is the
+    // silence convention ("SKIP") must leave no trace, so it starts with the
+    // first real text (or right before the fallback message).
+    let stopTyping = null
+    const ensureTyping = () => {
+      if (!stopTyping) stopTyping = this.startTyping(chatId)
+      return stopTyping
+    }
     try {
       const { sessionId } = await ensureSession(this.scope)
-      const stream = this.startStream(chatId, sessionId)
+      const stream = this.startStream(chatId, sessionId, ensureTyping)
       const result = await askSession(this.scope, parts)
-      const shown = await stream.finish(result.text)
-      if (!shown.sent) await this.sendText(chatId, result.text === '' ? 'Listo, pero no hubo texto de respuesta.' : result.text)
+      const finalText = String(result?.text ?? '')
+      const shown = await stream.finish(finalText)
+      // Silence: nothing sent, no fallback placeholder, no typing left behind.
+      if (shown.silent || isSilentReply(finalText)) return
+      if (!shown.sent) {
+        ensureTyping()
+        await this.sendText(chatId, finalText === '' ? 'Listo, pero no hubo texto de respuesta.' : finalText)
+      }
     } catch (error) {
+      ensureTyping()
       await this.sendText(chatId, `Error: ${error?.message ?? error}`)
     } finally {
-      stopTyping()
+      if (stopTyping) stopTyping()
     }
   }
 
   /** Streams assistant text deltas into one Telegram message, so the reply grows live. */
-  startStream(chatId, sessionId) {
-    if (!this.config.streamReplies) return { finish: async () => ({ sent: false }) }
+  startStream(chatId, sessionId, onActivity) {
+    if (!this.config.streamReplies) return { finish: async () => ({ sent: false, silent: false }) }
     let text = ''
     let messageId = null
     let lastEdit = 0
@@ -714,12 +757,16 @@ export class WhaleTelegram {
     const flush = () => {
       const body = text.trim()
       if (body === '') return Promise.resolve()
+      // Hold back partial silent replies: the final text may still be "SKIP",
+      // and streaming it live would send it before finish() can decide.
+      if (isSilentReply(body) || couldBecomeSilentReply(body)) return Promise.resolve()
       const now = Date.now()
       if (now - lastEdit < 1100 && lastEdit !== 0) return Promise.resolve()
       lastEdit = now
       const slice = body.length > this.config.maxReplyChars ? body.slice(0, this.config.maxReplyChars) : body
       editing = editing.then(async () => {
         try {
+          if (typeof onActivity === 'function') onActivity()
           if (messageId === null) {
             const sent = await this.bot.sendMessage(chatId, slice, { disable_web_page_preview: true })
             messageId = sent?.message_id ?? null
@@ -757,16 +804,25 @@ export class WhaleTelegram {
         } catch {
           /* already released */
         }
-        if (text.trim() === '' && typeof finalText === 'string') text = finalText
+        const final = String(finalText ?? '')
+        if (text.trim() === '' && final !== '') text = final
         lastEdit = 0
+        // The final text is authoritative: if it is exactly SKIP, do not flush
+        // whatever was buffered and report the turn as silent.
+        if (isSilentReply(final !== '' ? final : text)) {
+          await editing
+          return { sent: messageId !== null, silent: true }
+        }
         await flush()
         await editing
-        return { sent: messageId !== null }
+        return { sent: messageId !== null, silent: false }
       },
     }
   }
 
   async sendText(chatId, text) {
+    // Defense in depth: even a caller that forgets to check gets silence.
+    if (isSilentReply(text)) return
     for (const chunk of chunkText(text, this.config.maxReplyChars)) {
       try {
         await this.bot.sendMessage(chatId, chunk, { disable_web_page_preview: true })
@@ -779,14 +835,28 @@ export class WhaleTelegram {
 
   /** Upload a local image as an inline Telegram photo (for screenshots). */
   async sendPhoto(chatId, imagePath, caption = '') {
-    if (!this.bot) return
+    if (!this.bot) return { sent: null, mirror: { ok: false, error: 'telegram offline' } }
+    let sent
     try {
-      await this.bot.sendPhoto(chatId, imagePath, { caption })
+      sent = await this.bot.sendPhoto(chatId, imagePath, { caption })
     } catch (error) {
       this.warn(`foto: ${error?.message ?? error}`)
       // Fallback: at least tell the owner the file exists and where it is.
       await this.sendText(chatId, `No pude subir la imagen: ${error?.message ?? error}\nArchivo: ${imagePath}`)
+      throw error
     }
+    // Local mirror only (path + metadata, never base64): the shared history
+    // route merges it so both local surfaces show the photo too. Nothing here
+    // re-sends to Telegram.
+    const mirror = recordOutboxImage({
+      path: imagePath,
+      caption,
+      chatId,
+      messageId: sent?.message_id ?? null,
+      source: 'telegram_photo',
+    })
+    if (!mirror.ok) this.warn(`espejo local de la foto: ${mirror.error}`)
+    return { sent, mirror }
   }
 }
 
